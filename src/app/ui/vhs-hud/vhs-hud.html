@@ -1,0 +1,31 @@
+<div class="hud" [class.hud--dim]="dim()" aria-hidden="true">
+  <span class="frame frame--tl"></span>
+  <span class="frame frame--tr"></span>
+  <span class="frame frame--bl"></span>
+  <span class="frame frame--br"></span>
+
+  <div class="hud__corner hud__corner--tl">
+    <span class="rec"><span class="rec__dot"></span>REC</span>
+    <span class="badge">SP</span>
+  </div>
+
+  <div class="hud__corner hud__corner--tr">
+    <span class="battery">
+      <span class="battery__body"><span class="battery__level"></span></span>
+      <span class="battery__tip"></span>
+    </span>
+    <span class="badge">90%</span>
+  </div>
+
+  <div class="hud__corner hud__corner--bl">
+    <span>{{ date() }}</span>
+    <span>{{ time() }}</span>
+  </div>
+
+  <div class="hud__corner hud__corner--br">
+    <span class="badge">◄ SP</span>
+    <span>⏱ {{ counter() }}</span>
+  </div>
+
+  <div class="tracking"></div>
+</div>

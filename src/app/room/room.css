@@ -1,0 +1,100 @@
+:host {
+  display: contents;
+}
+
+.room {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #05060a;
+}
+
+.room__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.hotspot-label {
+  position: absolute;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #eaf5ff;
+  white-space: nowrap;
+  pointer-events: none;
+  border-radius: 999px;
+  background: rgba(10, 14, 24, 0.82);
+  border: 1px solid rgba(108, 208, 255, 0.45);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -160%);
+  animation: label-in 0.18s ease-out;
+}
+
+.hotspot-label__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6cd0ff;
+  box-shadow: 0 0 10px #6cd0ff;
+}
+
+@keyframes label-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -140%) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -160%) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hotspot-label {
+    animation: none;
+  }
+}
+
+.hint {
+  position: absolute;
+  z-index: 12;
+  left: 50%;
+  bottom: clamp(3.2rem, 9vh, 5rem);
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 0.5rem 1.1rem;
+  font-size: clamp(0.78rem, 1.8vw, 0.92rem);
+  letter-spacing: 0.06em;
+  color: #eaf5ff;
+  white-space: nowrap;
+  border-radius: 999px;
+  background: rgba(10, 14, 24, 0.7);
+  border: 1px solid rgba(140, 170, 255, 0.25);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  animation: hint-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes hint-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hint {
+    animation: none;
+    opacity: 0.85;
+  }
+}

@@ -1,0 +1,134 @@
+@if (section(); as sec) {
+  <aside class="panel" [attr.data-section]="sec">
+    <button class="panel__close" type="button" (click)="closePanel()" aria-label="Cerrar">
+      <span aria-hidden="true">×</span>
+    </button>
+
+    @switch (sec) {
+      @case ('about') {
+        <header class="panel__head">
+          <p class="panel__eyebrow">Sobre mí</p>
+          <h2 class="panel__title">{{ content.handle }}</h2>
+          <p class="panel__subtitle">{{ content.role }}</p>
+        </header>
+
+        <div class="panel__body">
+          @for (paragraph of content.about; track paragraph) {
+            <p class="panel__text">{{ paragraph }}</p>
+          }
+
+          <h3 class="panel__label">Educación</h3>
+          <ul class="edu">
+            @for (item of content.education; track item.title) {
+              <li class="edu__item">
+                <span class="edu__title">{{ item.title }}</span>
+                <span class="edu__meta">{{ item.place }} · {{ item.period }}</span>
+              </li>
+            }
+          </ul>
+
+          <h3 class="panel__label">Skills</h3>
+          <ul class="tags">
+            @for (skill of content.skills; track skill) {
+              <li class="tag">{{ skill }}</li>
+            }
+          </ul>
+        </div>
+      }
+
+      @case ('projects') {
+        @if (selected(); as project) {
+          <header class="panel__head">
+            <button class="panel__back" type="button" (click)="backToList()">← Discos</button>
+            <h2 class="panel__title">{{ project.title }}</h2>
+            <p class="panel__subtitle">{{ project.tagline }} · {{ project.year }}</p>
+          </header>
+
+          <div class="panel__body">
+            <div class="screen">
+              <p class="screen__text">{{ project.summary }}</p>
+            </div>
+
+            <h3 class="panel__label">Tecnologías</h3>
+            <ul class="tags">
+              @for (tech of project.tech; track tech) {
+                <li class="tag">{{ tech }}</li>
+              }
+            </ul>
+
+            <div class="actions">
+              @if (project.demoUrl) {
+                <a class="btn btn--primary" [href]="project.demoUrl" target="_blank" rel="noopener">
+                  Ver demo
+                </a>
+              }
+              @if (project.repoUrl) {
+                <a class="btn" [href]="project.repoUrl" target="_blank" rel="noopener">
+                  Código
+                </a>
+              }
+            </div>
+          </div>
+        } @else {
+          <header class="panel__head">
+            <p class="panel__eyebrow">Proyectos</p>
+            <h2 class="panel__title">Elige un disco</h2>
+            <p class="panel__subtitle">Inserta un cartucho para ver el detalle</p>
+          </header>
+
+          <div class="panel__body">
+            <ul class="discs">
+              @for (project of projects; track project.id) {
+                <li>
+                  <button class="disc" type="button" (click)="selectProject(project)">
+                    <span class="disc__hole" aria-hidden="true"></span>
+                    <span class="disc__text">
+                      <span class="disc__title">{{ project.title }}</span>
+                      <span class="disc__meta">{{ project.tagline }}</span>
+                    </span>
+                  </button>
+                </li>
+              }
+            </ul>
+          </div>
+        }
+      }
+
+      @case ('contact') {
+        <header class="panel__head">
+          <p class="panel__eyebrow">Contacto</p>
+          <h2 class="panel__title">Hablemos</h2>
+          <p class="panel__subtitle">Escríbeme y te respondo</p>
+        </header>
+
+        <div class="panel__body">
+          <label class="field">
+            <span class="field__label">Mensaje</span>
+            <textarea
+              class="field__input"
+              rows="4"
+              placeholder="Cuéntame sobre tu proyecto…"
+              (input)="onMessageInput($event)"
+            ></textarea>
+          </label>
+
+          <a class="btn btn--primary btn--block" [href]="mailtoHref()">Enviar correo</a>
+
+          <h3 class="panel__label">Enlaces</h3>
+          <ul class="links">
+            <li><a [href]="'mailto:' + content.contact.email">{{ content.contact.email }}</a></li>
+            @if (content.contact.github) {
+              <li><a [href]="content.contact.github" target="_blank" rel="noopener">GitHub</a></li>
+            }
+            @if (content.contact.linkedin) {
+              <li><a [href]="content.contact.linkedin" target="_blank" rel="noopener">LinkedIn</a></li>
+            }
+            @if (content.contact.location) {
+              <li class="links__muted">{{ content.contact.location }}</li>
+            }
+          </ul>
+        </div>
+      }
+    }
+  </aside>
+}

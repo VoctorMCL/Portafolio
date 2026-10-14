@@ -1,0 +1,225 @@
+function surface(width: number, height: number) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  return { canvas, ctx: canvas.getContext('2d')! };
+}
+
+export function woodCanvas(): HTMLCanvasElement {
+  const { canvas, ctx } = surface(256, 256);
+  ctx.fillStyle = '#41301f';
+  ctx.fillRect(0, 0, 256, 256);
+
+  for (let i = 0; i < 240; i++) {
+    const shade = 18 + Math.random() * 46;
+    ctx.strokeStyle = `rgba(${shade + 20}, ${shade + 8}, ${shade - 4}, ${0.06 + Math.random() * 0.14})`;
+    ctx.lineWidth = 0.5 + Math.random() * 2;
+    const y = Math.random() * 256;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.bezierCurveTo(64, y + (Math.random() - 0.5) * 10, 192, y + (Math.random() - 0.5) * 10, 256, y + (Math.random() - 0.5) * 6);
+    ctx.stroke();
+  }
+
+  for (let i = 0; i <= 256; i += 64) {
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, i);
+    ctx.lineTo(256, i);
+    ctx.stroke();
+  }
+
+  return canvas;
+}
+
+export function planksCanvas(): HTMLCanvasElement {
+  const { canvas, ctx } = surface(512, 512);
+  ctx.fillStyle = '#241a13';
+  ctx.fillRect(0, 0, 512, 512);
+
+  const plankH = 64;
+  for (let row = 0; row < 512 / plankH; row++) {
+    const y = row * plankH;
+    const tone = 26 + Math.random() * 22;
+    ctx.fillStyle = `rgb(${tone + 16}, ${tone + 4}, ${tone - 4})`;
+    ctx.fillRect(0, y, 512, plankH - 3);
+
+    for (let i = 0; i < 70; i++) {
+      ctx.strokeStyle = `rgba(10,6,2,${0.05 + Math.random() * 0.12})`;
+      ctx.lineWidth = 0.5 + Math.random();
+      const ly = y + Math.random() * plankH;
+      ctx.beginPath();
+      ctx.moveTo(0, ly);
+      ctx.bezierCurveTo(170, ly + (Math.random() - 0.5) * 8, 340, ly + (Math.random() - 0.5) * 8, 512, ly + (Math.random() - 0.5) * 5);
+      ctx.stroke();
+    }
+  }
+
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.lineWidth = 3;
+  for (let row = 0; row <= 8; row++) {
+    ctx.beginPath();
+    ctx.moveTo(0, row * plankH);
+    ctx.lineTo(512, row * plankH);
+    ctx.stroke();
+  }
+
+  return canvas;
+}
+
+export function wallCanvas(): HTMLCanvasElement {
+  const { canvas, ctx } = surface(256, 256);
+  ctx.fillStyle = '#1b1e2b';
+  ctx.fillRect(0, 0, 256, 256);
+
+  for (let i = 0; i < 6000; i++) {
+    const a = Math.random() * 0.05;
+    ctx.fillStyle = Math.random() > 0.5 ? `rgba(255,255,255,${a})` : `rgba(0,0,0,${a})`;
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, 1, 1);
+  }
+
+  return canvas;
+}
+
+export function sidingCanvas(): HTMLCanvasElement {
+  const { canvas, ctx } = surface(256, 256);
+  ctx.fillStyle = '#2b2b38';
+  ctx.fillRect(0, 0, 256, 256);
+
+  for (let y = 0; y < 256; y += 16) {
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(0, y + 13, 256, 3);
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.fillRect(0, y, 256, 1);
+  }
+
+  return canvas;
+}
+
+export function rugCanvas(): HTMLCanvasElement {
+  const { canvas, ctx } = surface(256, 256);
+  ctx.fillStyle = '#20233a';
+  ctx.fillRect(0, 0, 256, 256);
+
+  ctx.strokeStyle = 'rgba(120, 210, 255, 0.5)';
+  ctx.lineWidth = 3;
+  for (let r = 40; r < 150; r += 26) {
+    ctx.strokeRect(128 - r, 128 - r * 0.62, r * 2, r * 1.24);
+  }
+  ctx.strokeStyle = 'rgba(255, 47, 176, 0.45)';
+  ctx.strokeRect(18, 18, 220, 220);
+
+  for (let i = 0; i < 5000; i++) {
+    ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.03})`;
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, 1, 1);
+  }
+
+  return canvas;
+}
+
+export function posterCanvas(lines: string[], bg: string, fg: string): HTMLCanvasElement {
+  const { canvas, ctx } = surface(256, 384);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, 256, 384);
+  ctx.strokeStyle = fg;
+  ctx.lineWidth = 8;
+  ctx.strokeRect(12, 12, 232, 360);
+
+  ctx.fillStyle = fg;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  lines.forEach((line, i) => {
+    ctx.font = i === 0 ? 'bold 44px monospace' : 'bold 30px monospace';
+    ctx.fillText(line, 128, 120 + i * 64);
+  });
+
+  return canvas;
+}
+
+export function screenCanvas(): HTMLCanvasElement {
+  const { canvas, ctx } = surface(512, 320);
+  ctx.fillStyle = '#020a14';
+  ctx.fillRect(0, 0, 512, 320);
+
+  ctx.fillStyle = 'rgba(40, 160, 255, 0.10)';
+  for (let y = 0; y < 320; y += 4) {
+    ctx.fillRect(0, y, 512, 1);
+  }
+
+  ctx.font = '18px monospace';
+  const lines = [
+    { text: '> whoami', color: '#6cd0ff' },
+    { text: '  victormcl', color: '#c8e6ff' },
+    { text: '> ls proyectos/', color: '#6cd0ff' },
+    { text: '  simulador  rfid  campusclash', color: '#c8e6ff' },
+    { text: '> status --now', color: '#6cd0ff' },
+    { text: '  buscando ideas...', color: '#ff6bd0' },
+  ];
+  lines.forEach((line, i) => {
+    ctx.fillStyle = line.color;
+    ctx.fillText(line.text, 22, 46 + i * 34);
+  });
+
+  ctx.fillStyle = '#9ef0ff';
+  ctx.fillRect(22, 250, 12, 20);
+
+  return canvas;
+}
+
+export function skyCanvas(): HTMLCanvasElement {
+  const { canvas, ctx } = surface(1024, 512);
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, 512);
+  gradient.addColorStop(0, '#080418');
+  gradient.addColorStop(0.3, '#160f38');
+  gradient.addColorStop(0.55, '#221850');
+  gradient.addColorStop(0.78, '#2a1e5c');
+  gradient.addColorStop(1, '#100a26');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 1024, 512);
+
+  for (let i = 0; i < 700; i++) {
+    const x = Math.random() * 1024;
+    const y = Math.random() * 320;
+    const a = Math.random() * 0.85;
+    const r = Math.random() * 1.4 + 0.2;
+    ctx.fillStyle = `rgba(${210 + Math.random() * 45}, ${220 + Math.random() * 35}, 255, ${a})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const moonX = 760;
+  const moonY = 110;
+  const moonGlow = ctx.createRadialGradient(moonX, moonY, 0, moonX, moonY, 150);
+  moonGlow.addColorStop(0, 'rgba(210, 225, 255, 0.65)');
+  moonGlow.addColorStop(1, 'rgba(210, 225, 255, 0)');
+  ctx.fillStyle = moonGlow;
+  ctx.fillRect(0, 0, 1024, 512);
+
+  ctx.fillStyle = '#e8eeff';
+  ctx.beginPath();
+  ctx.arc(moonX, moonY, 26, 0, Math.PI * 2);
+  ctx.fill();
+
+  return canvas;
+}
+
+export function doormatCanvas(): HTMLCanvasElement {
+  const { canvas, ctx } = surface(256, 160);
+  ctx.fillStyle = '#2a2016';
+  ctx.fillRect(0, 0, 256, 160);
+  ctx.fillStyle = '#c9a24b';
+  ctx.font = 'bold 40px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('WELCOME', 128, 80);
+
+  for (let i = 0; i < 2500; i++) {
+    ctx.fillStyle = `rgba(0,0,0,${Math.random() * 0.15})`;
+    ctx.fillRect(Math.random() * 256, Math.random() * 160, 1, 1);
+  }
+
+  return canvas;
+}

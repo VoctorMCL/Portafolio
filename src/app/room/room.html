@@ -1,0 +1,24 @@
+<div class="room">
+  <canvas #canvas class="room__canvas"></canvas>
+
+  <app-vhs-hud [dim]="phase() === 'idle' || phase() === 'focus'" />
+
+  @if (hover(); as info) {
+    @if (!section() && !loading() && phase() !== 'entering') {
+      <div class="hotspot-label" [style.left.px]="info.x" [style.top.px]="info.y">
+        <span class="hotspot-label__dot" aria-hidden="true"></span>
+        {{ labelFor(info.id) }}
+      </div>
+    }
+  }
+
+  @if (!hover() && !section() && !loading()) {
+    @if (phase() === 'intro') {
+      <p class="hint">Haz clic en la puerta para entrar</p>
+    } @else if (phase() === 'idle') {
+      <p class="hint">Haz clic en los objetos para explorar</p>
+    }
+  }
+
+  <app-info-panel [section]="section()" (close)="closeSection()" />
+</div>
