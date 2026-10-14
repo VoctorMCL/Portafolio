@@ -1,0 +1,215 @@
+:host {
+  display: block;
+  min-height: 100dvh;
+  background: #05060a;
+  color: #e8ecf4;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.loader {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(
+    circle at 50% 48%,
+    rgba(10, 13, 22, 0.22) 0%,
+    rgba(3, 4, 7, 0.55) 55%,
+    rgba(2, 3, 6, 0.9) 100%
+  );
+  transition:
+    opacity 1s ease,
+    visibility 1s ease,
+    filter 1s ease;
+}
+
+.loader.hidden {
+  opacity: 0;
+  visibility: hidden;
+  filter: blur(10px);
+  pointer-events: none;
+}
+
+.noise {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  opacity: 0.42;
+  mix-blend-mode: screen;
+  animation: flicker 0.12s steps(2) infinite;
+}
+
+.scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.05) 0px,
+    rgba(255, 255, 255, 0.05) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+.glitch {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -15%;
+  height: 12%;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(120, 190, 255, 0.18),
+    transparent
+  );
+  animation: sweep 2.4s linear infinite;
+}
+
+.loader-core {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.1rem;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.loader-title {
+  margin: 0;
+  font-size: clamp(1.5rem, 5vw, 2.75rem);
+  font-weight: 700;
+  letter-spacing: 0.5em;
+  padding-left: 0.5em;
+  text-transform: uppercase;
+  color: #f4f7ff;
+  text-shadow: 0 0 18px rgba(120, 190, 255, 0.55);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.loader-bar {
+  width: min(240px, 60vw);
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.loader-bar span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    #7cc4ff,
+    #ffffff,
+    #7cc4ff,
+    transparent
+  );
+  animation: slide 1.3s ease-in-out infinite;
+}
+
+.loader-status {
+  font-size: 0.7rem;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  color: rgba(200, 220, 255, 0.65);
+  animation: blink 1s steps(2) infinite;
+}
+
+@keyframes flicker {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.64;
+  }
+}
+
+@keyframes sweep {
+  0% {
+    top: -15%;
+  }
+  100% {
+    top: 115%;
+  }
+}
+
+@keyframes slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .noise,
+  .glitch,
+  .loader-title,
+  .loader-bar span,
+  .loader-status {
+    animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .loader-core {
+    gap: 0.9rem;
+    padding: 1.25rem;
+  }
+
+  .loader-title {
+    letter-spacing: 0.32em;
+    padding-left: 0.32em;
+  }
+}
+
+@media (max-width: 400px) {
+  .loader-title {
+    letter-spacing: 0.22em;
+    padding-left: 0.22em;
+  }
+
+  .loader-status {
+    letter-spacing: 0.25em;
+  }
+}
+
