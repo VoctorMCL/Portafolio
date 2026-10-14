@@ -10,12 +10,12 @@ import {
 } from '@angular/core';
 import { LoadingService } from '../loading.service';
 import { InfoPanel, PanelSection } from '../ui/info-panel/info-panel';
-import { HotspotId, HoverInfo, InteriorId, RoomScene, ScenePhase } from './room-scene';
+import { DiscProject, fallbackProjects, fetchGitHubProjects } from '../data/github';
+import { HoverInfo, HotspotId, PanelId, RoomScene, ScenePhase, ScreenRect } from './room-scene';
 import { VhsHud } from '../ui/vhs-hud/vhs-hud';
 
-const SECTION_BY_HOTSPOT: Record<InteriorId, PanelSection> = {
+const SECTION_BY_HOTSPOT: Record<PanelId, PanelSection> = {
   shelf: 'about',
-  tv: 'projects',
   desk: 'contact',
 };
 
@@ -42,6 +42,14 @@ export class Room implements OnDestroy {
   protected readonly hover = signal<HoverInfo | null>(null);
   protected readonly section = signal<PanelSection | null>(null);
   protected readonly phase = signal<ScenePhase>('intro');
+  protected readonly disc = signal<DiscProject | null>(null);
+  protected readonly screenRect = signal<ScreenRect | null>(null);
+
+  private readonly onKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') {
+      this.onEscape();
+    }
+  };
 
   constructor() {
     afterNextRender(() => {
@@ -49,19 +57,49 @@ export class Room implements OnDestroy {
         const scene = new RoomScene(this.canvasRef().nativeElement, {
           onHover: (info) => this.hover.set(info),
           onSelect: (id) => this.openSection(id),
+          onDiscSelect: (project) => this.disc.set(project),
+          onScreenRect: (rect) => this.screenRect.set(rect),
           onPhase: (phase) => this.phase.set(phase),
         });
         this.scene = scene;
+        scene.setProjects(fallbackProjects());
         scene.setPhase('intro');
         scene.start();
+        void this.loadProjects(scene);
       } catch (error) {
         console.error('No se pudo iniciar la escena 3D:', error);
       }
     });
+
+    window.addEventListener('keydown', this.onKeydown);
   }
 
-  protected labelFor(id: HotspotId): string {
-    return LABEL_BY_HOTSPOT[id];
+  private async loadProjects(scene: RoomScene): Promise<void> {
+    const projects = await fetchGitHubProjects();
+    if (this.scene === scene && projects.length > 0) {
+      scene.setProjects(projects);
+    }
+  }
+
+  protected label(info: HoverInfo): string {
+    if (info.id === 'disc') {
+      return info.discName ?? 'Disco';
+    }
+    return LABEL_BY_HOTSPOT[info.id];
+  }
+
+  protected overlayStyle(): Record<string, string> {
+    const rect = this.screenRect();
+    if (!rect) {
+      return { opacity: '0', 'pointer-events': 'none' };
+    }
+    const width = Math.min(Math.max(rect.width, 320), 680);
+    return {
+      left: `${rect.x + rect.width / 2}px`,
+      top: `${rect.y + rect.height / 2}px`,
+      width: `${width}px`,
+      opacity: '1',
+    };
   }
 
   protected closeSection(): void {
@@ -69,13 +107,30 @@ export class Room implements OnDestroy {
     this.scene?.returnToIdle();
   }
 
-  private openSection(id: InteriorId): void {
+  protected closeDisc(): void {
+    this.disc.set(null);
+    this.screenRect.set(null);
+    this.scene?.ejectDisc();
+  }
+
+  private onEscape(): void {
+    if (this.disc()) {
+      this.closeDisc();
+    } else if (this.section()) {
+      this.closeSection();
+    } else if (this.phase() === 'focus') {
+      this.scene?.returnToIdle();
+    }
+  }
+
+  private openSection(id: PanelId): void {
     this.hover.set(null);
     this.section.set(SECTION_BY_HOTSPOT[id]);
     this.scene?.focus(id);
   }
 
   ngOnDestroy(): void {
+    window.removeEventListener('keydown', this.onKeydown);
     this.scene?.dispose();
   }
 }

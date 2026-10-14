@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
-import { PROJECTS, Project, ROOM_CONTENT } from '../../data/portfolio';
+import { ROOM_CONTENT } from '../../data/portfolio';
 
-export type PanelSection = 'about' | 'projects' | 'contact';
+export type PanelSection = 'about' | 'contact';
 
 @Component({
   selector: 'app-info-panel',
@@ -14,9 +14,6 @@ export class InfoPanel {
   readonly close = output<void>();
 
   protected readonly content = ROOM_CONTENT;
-  protected readonly projects = PROJECTS;
-  protected readonly selected = signal<Project | null>(null);
-
   protected readonly contactBody = signal('');
 
   protected readonly mailtoHref = computed(() => {
@@ -25,20 +22,11 @@ export class InfoPanel {
     return `mailto:${this.content.contact.email}?subject=${subject}&body=${body}`;
   });
 
-  protected selectProject(project: Project): void {
-    this.selected.set(project);
-  }
-
-  protected backToList(): void {
-    this.selected.set(null);
-  }
-
   protected onMessageInput(event: Event): void {
     this.contactBody.set((event.target as HTMLTextAreaElement).value);
   }
 
   protected closePanel(): void {
-    this.selected.set(null);
     this.close.emit();
   }
 }

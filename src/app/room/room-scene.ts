@@ -1,7 +1,7 @@
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
-import { Vector2, Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Matrix, Vector2, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { Constants } from '@babylonjs/core/Engines/constants';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
@@ -29,7 +29,10 @@ import { ExtrudeShape } from '@babylonjs/core/Meshes/Builders/shapeBuilder';
 import '@babylonjs/core/Culling/ray';
 import '@babylonjs/core/Rendering/outlineRenderer';
 import { VHS_SHADER_NAME } from './vhs-post';
+import type { DiscProject } from '../data/github';
 import {
+  discCanvas,
+  discScreenCanvas,
   doormatCanvas,
   planksCanvas,
   posterCanvas,
@@ -43,17 +46,31 @@ import {
 
 export type HotspotId = 'door' | 'shelf' | 'tv' | 'desk';
 export type InteriorId = Exclude<HotspotId, 'door'>;
+export type PanelId = Exclude<InteriorId, 'tv'>;
 export type ScenePhase = 'intro' | 'entering' | 'idle' | 'focus';
+export type HoverTargetId = HotspotId | 'disc';
 
 export interface HoverInfo {
-  id: HotspotId;
+  id: HoverTargetId;
+  discName?: string;
   x: number;
   y: number;
 }
 
+export interface ScreenRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+type PickTarget = { kind: 'hotspot'; id: HotspotId } | { kind: 'disc'; index: number };
+
 export interface RoomSceneCallbacks {
   onHover?: (info: HoverInfo | null) => void;
-  onSelect?: (id: InteriorId) => void;
+  onSelect?: (id: PanelId) => void;
+  onDiscSelect?: (project: DiscProject) => void;
+  onScreenRect?: (rect: ScreenRect | null) => void;
   onEnter?: () => void;
   onPhase?: (phase: ScenePhase) => void;
 }
@@ -79,14 +96,29 @@ const FOCUS: Record<InteriorId, Pose> = {
     target: new Vector3(-3.8, 1.2, -0.1),
   },
   tv: {
-    position: new Vector3(1.4, 1.5, 0.9),
-    target: new Vector3(3.72, 1.35, -0.5),
+    position: new Vector3(0.85, 1.55, -1.5),
+    target: new Vector3(4.0, 1.62, -1.5),
   },
   desk: {
     position: new Vector3(0, 1.2, -0.4),
     target: new Vector3(0, 1.05, -3.4),
   },
 };
+
+const SCREEN_POSE: Pose = {
+  position: new Vector3(2.35, 1.14, -1.5),
+  target: new Vector3(3.46, 1.05, -1.55),
+};
+
+const MEDIA_WALL_X = 4.0;
+const MAX_DISCS = 24;
+const RACK_COLS = 6;
+const RACK_ROWS = 4;
+const RACK_COL_GAP = 0.38;
+const RACK_ROW_GAP = 0.3;
+const RACK_TOP_Y = 2.42;
+const DISC_RADIUS = 0.14;
+const DVD_SLOT = new Vector3(3.52, 0.85, -0.75);
 
 const ACCENT = Color3.FromHexString('#8fd6ff');
 const NEON_PINK = Color3.FromHexString('#ff2fb0');
@@ -123,10 +155,22 @@ export class RoomScene {
   private phase: ScenePhase = 'intro';
   private goal: Pose = INTRO;
   private hoveredId: HotspotId | null = null;
+  private hoveredDisc: number | null = null;
   private vhsValue = 1;
   private elapsed = 0;
   private texCounter = 0;
   private disposed = false;
+
+  private discs: Mesh[] = [];
+  private discHomes: Vector3[] = [];
+  private discProjects: DiscProject[] = [];
+  private discTween?: { mesh: Mesh; from: Vector3; to: Vector3; elapsed: number; duration: number };
+  private mediaOpen = false;
+  private loadedDisc: number | null = null;
+  private screenEmitted = false;
+  private tvScreenMat?: PBRMaterial;
+  private tvScreenMesh?: Mesh;
+  private tvScreenTexture?: DynamicTexture;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -201,21 +245,199 @@ export class RoomScene {
     if (phase === 'focus') {
       return;
     }
+    this.resetMedia();
     this.phase = phase;
     this.goal = phase === 'intro' ? INTRO : IDLE;
     this.callbacks.onPhase?.(phase);
   }
 
   focus(id: InteriorId): void {
+    this.resetMedia();
     this.phase = 'focus';
     this.goal = FOCUS[id];
     this.callbacks.onPhase?.('focus');
   }
 
   returnToIdle(): void {
+    this.resetMedia();
     this.phase = 'idle';
     this.goal = IDLE;
     this.callbacks.onPhase?.('idle');
+  }
+
+  setProjects(projects: DiscProject[]): void {
+    this.discProjects = projects.slice(0, MAX_DISCS);
+    this.buildDiscMeshes();
+  }
+
+  ejectDisc(): void {
+    if (this.loadedDisc === null) {
+      return;
+    }
+    const index = this.loadedDisc;
+    const mesh = this.discs[index];
+    this.loadedDisc = null;
+    this.setScreen(null);
+    if (mesh) {
+      mesh.setEnabled(true);
+      mesh.position.copyFrom(DVD_SLOT);
+      this.discTween = { mesh, from: DVD_SLOT.clone(), to: this.discHomes[index].clone(), elapsed: 0, duration: 0.5 };
+    }
+    if (this.mediaOpen) {
+      this.startTransition(FOCUS.tv, 0.7);
+    }
+    if (this.screenEmitted) {
+      this.screenEmitted = false;
+      this.callbacks.onScreenRect?.(null);
+    }
+  }
+
+  private openDiscRack(): void {
+    this.resetMedia();
+    this.phase = 'focus';
+    this.goal = FOCUS.tv;
+    this.mediaOpen = true;
+    this.callbacks.onPhase?.('focus');
+  }
+
+  private resetMedia(): void {
+    if (this.loadedDisc !== null) {
+      const mesh = this.discs[this.loadedDisc];
+      if (mesh) {
+        mesh.position.copyFrom(this.discHomes[this.loadedDisc]);
+        mesh.setEnabled(true);
+      }
+      this.loadedDisc = null;
+      this.setScreen(null);
+    }
+    this.mediaOpen = false;
+    this.discTween = undefined;
+    if (this.screenEmitted) {
+      this.screenEmitted = false;
+      this.callbacks.onScreenRect?.(null);
+    }
+  }
+
+  private buildDiscMeshes(): void {
+    this.discTween = undefined;
+    this.loadedDisc = null;
+    this.hoveredDisc = null;
+    for (const mesh of this.discs) {
+      mesh.material?.dispose(true, true);
+      mesh.dispose();
+    }
+    this.discs = [];
+    this.discHomes = [];
+
+    this.discProjects.forEach((project, index) => {
+      const home = this.discSlotPosition(index);
+      const mesh = CreateCylinder(
+        `disc-${index}`,
+        { height: 0.022, diameter: DISC_RADIUS * 2, tessellation: 32 },
+        this.scene,
+      );
+      mesh.rotation.z = Math.PI / 2;
+      mesh.bakeCurrentTransformIntoVertices();
+      mesh.position.copyFrom(home);
+
+      const mat = new PBRMaterial(`discMat-${index}`, this.scene);
+      mat.albedoColor = Color3.Black();
+      mat.emissiveColor = Color3.White();
+      mat.emissiveIntensity = 0.42;
+      mat.metallic = 0.72;
+      mat.roughness = 0.34;
+      mat.maxSimultaneousLights = 10;
+      const tex = this.texture(discCanvas(project.title, project.accent));
+      mat.albedoTexture = tex;
+      mat.emissiveTexture = tex;
+      mesh.material = mat;
+      mesh.metadata = { discIndex: index };
+
+      this.discs.push(mesh);
+      this.discHomes.push(home.clone());
+    });
+  }
+
+  private discSlotPosition(index: number): Vector3 {
+    const col = index % RACK_COLS;
+    const row = Math.floor(index / RACK_COLS) % RACK_ROWS;
+    const z = -1.5 + (col - (RACK_COLS - 1) / 2) * RACK_COL_GAP;
+    const y = RACK_TOP_Y - row * RACK_ROW_GAP;
+    return new Vector3(MEDIA_WALL_X, y, z);
+  }
+
+  private updateDisc(dt: number): void {
+    if (!this.discTween) {
+      return;
+    }
+    const tween = this.discTween;
+    tween.elapsed += dt;
+    const t = Math.min(1, tween.elapsed / tween.duration);
+    Vector3.LerpToRef(tween.from, tween.to, easeInOutCubic(t), tween.mesh.position);
+    if (t >= 1) {
+      tween.mesh.setEnabled(false);
+      this.discTween = undefined;
+    }
+  }
+
+  private insertDisc(index: number): void {
+    const project = this.discProjects[index];
+    const mesh = this.discs[index];
+    if (!project || !mesh) {
+      return;
+    }
+    if (this.loadedDisc !== null && this.loadedDisc !== index) {
+      const prev = this.discs[this.loadedDisc];
+      if (prev) {
+        prev.position.copyFrom(this.discHomes[this.loadedDisc]);
+        prev.setEnabled(true);
+      }
+    }
+    this.loadedDisc = index;
+    this.mediaOpen = true;
+    this.clearHighlights();
+    this.callbacks.onHover?.(null);
+    this.setScreen(discScreenCanvas(project.title, project.language ?? 'github', project.accent));
+    this.discTween = { mesh, from: mesh.position.clone(), to: DVD_SLOT.clone(), elapsed: 0, duration: 0.6 };
+    this.startTransition(SCREEN_POSE, 0.9);
+    this.callbacks.onDiscSelect?.(project);
+  }
+
+  private setScreen(canvas: HTMLCanvasElement | null): void {
+    if (!this.tvScreenMat) {
+      return;
+    }
+    this.tvScreenTexture?.dispose();
+    this.tvScreenTexture = this.texture(canvas ?? screenCanvas());
+    this.tvScreenMat.emissiveTexture = this.tvScreenTexture;
+  }
+
+  private emitScreenRect(): void {
+    if (this.loadedDisc === null || !this.tvScreenMesh || !this.callbacks.onScreenRect) {
+      return;
+    }
+    const cssWidth = this.canvas.clientWidth;
+    const cssHeight = this.canvas.clientHeight;
+    if (cssWidth === 0 || cssHeight === 0) {
+      return;
+    }
+    const box = this.tvScreenMesh.getBoundingInfo().boundingBox;
+    const viewport = this.camera.viewport.toGlobal(cssWidth, cssHeight);
+    const transform = this.scene.getTransformMatrix();
+    const identity = Matrix.Identity();
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const corner of box.vectorsWorld) {
+      const projected = Vector3.Project(corner, identity, transform, viewport);
+      minX = Math.min(minX, projected.x);
+      minY = Math.min(minY, projected.y);
+      maxX = Math.max(maxX, projected.x);
+      maxY = Math.max(maxY, projected.y);
+    }
+    this.screenEmitted = true;
+    this.callbacks.onScreenRect?.({ x: minX, y: minY, width: maxX - minX, height: maxY - minY });
   }
 
   dispose(): void {
@@ -234,9 +456,11 @@ export class RoomScene {
     this.elapsed += dt;
 
     this.updateDoor(dt);
+    this.updateDisc(dt);
     this.updateCamera(dt);
 
     this.scene.render();
+    this.emitScreenRect();
   }
 
   private updateCamera(dt: number): void {
@@ -649,11 +873,12 @@ export class RoomScene {
       while (offset < 0.85) {
         const w = 0.08 + Math.random() * 0.1;
         const h = 0.28 + Math.random() * 0.14;
+        const colorIndex = (((shelfIdx * 3 + Math.floor(offset * 10)) % bookColors.length) + bookColors.length) % bookColors.length;
         const book = this.box(
           `book-${shelfIdx}-${offset.toFixed(2)}`,
           { w: 0.42, h, d: w },
           new Vector3(x, [0.4, 1.05, 1.7, 2.35][shelfIdx] + h / 2 + 0.03, -1.4 + offset + w / 2),
-          this.pbr('book' + shelfIdx + offset.toFixed(2), bookColors[(shelfIdx * 3 + Math.floor(offset * 10)) % bookColors.length], { roughness: 0.85 }),
+          this.pbr('book' + shelfIdx + offset.toFixed(2), bookColors[colorIndex], { roughness: 0.85 }),
         );
         pickables.push(book);
         offset += w + 0.02;
@@ -685,49 +910,66 @@ export class RoomScene {
   }
 
   private buildTv(): void {
-    const x = 3.9;
-    const matte = this.pbr('tvMatte', '#12121c', { roughness: 0.4, metallic: 0.3 });
-    const pickables: Mesh[] = [];
+    const x = 3.7;
+    const tvZ = -1.7;
+    const dvdZ = -0.75;
 
-    const stand = this.slab('tvStand', 2.0, 0.5, 0.06, 0.03, new Vector3(x, 0.5, -1.2), matte);
-    stand.rotation.y = Math.PI / 2;
-    stand.bakeCurrentTransformIntoVertices();
-    pickables.push(stand);
-    [0.85, 1.75].forEach((y, i) => {
-      const board = this.slab('tvBoard' + i, 2.0, 0.5, 0.05, 0.03, new Vector3(x, y, -1.2), matte);
-      board.rotation.y = Math.PI / 2;
-      board.bakeCurrentTransformIntoVertices();
-      pickables.push(board);
+    const cabinetMat = this.pbr('mediaCabinet', '#ffffff', { roughness: 0.5 });
+    cabinetMat.albedoTexture = this.texture(woodCanvas(), 1.5, 1);
+    const metal = this.pbr('tvMetal', '#26242f', { roughness: 0.3, metallic: 0.7 });
+    const plastic = this.pbr('tvPlastic', '#2a2320', { roughness: 0.55, metallic: 0.05 });
+    const rackMat = this.pbr('discRack', '#1a1424', { roughness: 0.6, metallic: 0.2 });
+
+    this.slab('mediaCabinet', 0.9, 2.2, 0.7, 0.06, new Vector3(x, 0.35, -1.5), cabinetMat);
+    this.box('cabinetSeam', { w: 0.02, h: 0.5, d: 0.02 }, new Vector3(3.26, 0.35, -1.5), metal);
+
+    const tvPickables: Mesh[] = [];
+
+    const tvBody = this.box('tvBody', { w: 0.68, h: 0.64, d: 0.84 }, new Vector3(x + 0.08, 1.03, tvZ), plastic);
+    const tvBezel = this.box('tvBezel', { w: 0.05, h: 0.62, d: 0.78 }, new Vector3(3.45, 1.03, tvZ), metal);
+
+    const screenMat = new PBRMaterial('tvScreenMat', this.scene);
+    screenMat.albedoColor = Color3.Black();
+    screenMat.emissiveColor = Color3.White();
+    screenMat.emissiveIntensity = 1.25;
+    screenMat.metallic = 0;
+    screenMat.roughness = 1;
+    screenMat.maxSimultaneousLights = 10;
+    this.tvScreenMat = screenMat;
+    const screenMesh = this.box('tvScreen', { w: 0.02, h: 0.5, d: 0.66 }, new Vector3(3.43, 1.03, tvZ), screenMat);
+    this.tvScreenMesh = screenMesh;
+    this.setScreen(null);
+
+    tvPickables.push(tvBody, tvBezel, screenMesh);
+
+    [0.86, 1.14].forEach((y, i) => {
+      const knob = CreateCylinder('tvKnob' + i, { height: 0.04, diameter: 0.1, tessellation: 16 }, this.scene);
+      knob.rotation.z = Math.PI / 2;
+      knob.position = new Vector3(3.44, y, tvZ + 0.3);
+      knob.material = metal;
+      tvPickables.push(knob);
     });
 
-    const tvScreen = new PBRMaterial('tvScreen', this.scene);
-    tvScreen.albedoColor = Color3.Black();
-    tvScreen.emissiveColor = NEON_CYAN;
-    tvScreen.emissiveIntensity = 1.1;
-    tvScreen.metallic = 0;
-    tvScreen.roughness = 1;
-    tvScreen.maxSimultaneousLights = 10;
+    this.box('dvdBody', { w: 0.5, h: 0.1, d: 0.7 }, new Vector3(x, 0.76, dvdZ), metal);
+    this.box('dvdSlot', { w: 0.02, h: 0.02, d: 0.5 }, new Vector3(3.44, 0.78, dvdZ), this.pbr('dvdSlotMat', '#05060a', { roughness: 1 }));
+    this.box('dvdLed', { w: 0.01, h: 0.05, d: 0.12 }, new Vector3(3.44, 0.76, dvdZ + 0.24), this.emissive('dvdLedMat', NEON_CYAN, 1.2));
 
-    const tvFrame = this.box('tvFrame', { w: 0.06, h: 1.05, d: 1.75 }, new Vector3(x - 0.05, 1.45, -1.2), matte);
-    const tvPanel = this.box('tvPanel', { w: 0.02, h: 0.9, d: 1.6 }, new Vector3(x - 0.09, 1.45, -1.2), tvScreen);
-    pickables.push(tvFrame, tvPanel);
+    const rackZ = -1.5;
+    this.box('discRack', { w: 0.06, h: 1.2, d: 2.4 }, new Vector3(4.12, 2.0, rackZ), rackMat);
+    for (let r = 0; r <= RACK_ROWS; r++) {
+      this.box('rackRow' + r, { w: 0.1, h: 0.02, d: 2.4 }, new Vector3(4.08, RACK_TOP_Y + DISC_RADIUS + 0.04 - r * RACK_ROW_GAP, rackZ), metal);
+    }
 
-    const consoleBody = this.slab('console', 0.9, 0.5, 0.06, 0.03, new Vector3(x, 0.85, -1.9), this.pbr('consoleMat', '#1a1626', { roughness: 0.4, metallic: 0.4 }));
-    pickables.push(consoleBody);
-    const consoleGlow = this.box('consoleGlow', { w: 0.02, h: 0.08, d: 0.6 }, new Vector3(x - 0.05, 0.85, -1.9), this.emissive('consoleGlowMat', NEON_PINK, 1.4));
-    pickables.push(consoleGlow);
+    const tvLight = new PointLight('tvGlow', new Vector3(3.1, 1.4, tvZ), this.scene);
+    tvLight.diffuse = NEON_CYAN;
+    tvLight.intensity = 2.5;
+    tvLight.range = 4.5;
 
-    ['#ff006e', '#3a86ff', '#06d6a0'].forEach((c, i) => {
-      const cartridge = this.box('cart' + i, { w: 0.28, h: 0.32, d: 0.05 }, new Vector3(x - 0.03, 1.9 + i * 0.04, -1.7 + i * 0.35), this.pbr('cartMat' + i, c, { roughness: 0.6 }));
-      cartridge.rotation.z = 0.06 * (i - 1);
-      pickables.push(cartridge);
+    tvPickables.forEach((mesh) => {
+      mesh.metadata = { hotspotId: 'tv' as HotspotId };
     });
-
-    pickables.forEach((m) => {
-      m.metadata = { hotspotId: 'tv' as HotspotId };
-    });
-    this.interiorPickable.set('tv', pickables);
-    this.anchors.set('tv', new Vector3(x, 1.45, -1.2));
+    this.interiorPickable.set('tv', tvPickables);
+    this.anchors.set('tv', new Vector3(3.2, 1.2, tvZ));
   }
 
   private buildDecor(): void {
@@ -837,64 +1079,110 @@ export class RoomScene {
   }
 
   private readonly onPointerMove = (event: PointerEvent): void => {
-    const id = this.pickAt(event);
-    if (id !== this.hoveredId) {
-      this.clearHighlight();
-      this.hoveredId = id;
-      if (id) {
-        this.applyHighlight(id);
-      }
-    }
-    if (id) {
-      const rect = this.canvas.getBoundingClientRect();
-      this.callbacks.onHover?.({ id, x: event.clientX - rect.left, y: event.clientY - rect.top });
-    } else {
-      this.callbacks.onHover?.(null);
-    }
+    this.updateHover(this.pickAt(event), event);
   };
 
   private readonly onPointerLeave = (): void => {
-    this.clearHighlight();
-    this.hoveredId = null;
+    this.clearHighlights();
     this.callbacks.onHover?.(null);
   };
 
   private readonly onPointerUp = (event: PointerEvent): void => {
-    const id = this.pickAt(event);
-    if (id === 'door') {
+    const target = this.pickAt(event);
+    if (!target) {
+      return;
+    }
+    if (target.kind === 'disc') {
+      this.insertDisc(target.index);
+      return;
+    }
+    if (target.id === 'door') {
       this.enterHouse();
-    } else if (id) {
-      this.callbacks.onSelect?.(id);
+    } else if (target.id === 'tv') {
+      this.openDiscRack();
+    } else {
+      this.callbacks.onSelect?.(target.id as PanelId);
     }
   };
 
-  private pickAt(event: PointerEvent): HotspotId | null {
+  private updateHover(target: PickTarget | null, event: PointerEvent): void {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    if (target?.kind === 'hotspot') {
+      if (this.hoveredDisc !== null) {
+        this.clearDiscHighlight();
+        this.hoveredDisc = null;
+      }
+      if (target.id !== this.hoveredId) {
+        this.clearHotspotHighlight();
+        this.hoveredId = target.id;
+        this.applyHotspotHighlight(target.id);
+      }
+      this.callbacks.onHover?.({ id: target.id, x, y });
+      return;
+    }
+
+    if (target?.kind === 'disc') {
+      if (this.hoveredId !== null) {
+        this.clearHotspotHighlight();
+        this.hoveredId = null;
+      }
+      if (target.index !== this.hoveredDisc) {
+        this.clearDiscHighlight();
+        this.hoveredDisc = target.index;
+        this.applyDiscHighlight(target.index);
+      }
+      this.callbacks.onHover?.({ id: 'disc', discName: this.discProjects[target.index]?.title, x, y });
+      return;
+    }
+
+    this.clearHighlights();
+    this.callbacks.onHover?.(null);
+  }
+
+  private pickAt(event: PointerEvent): PickTarget | null {
     const rect = this.canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     const pick = this.scene.pick(x, y, (mesh) => {
-      const meta = mesh.metadata as { hotspotId?: HotspotId } | null;
-      const id = meta?.hotspotId;
-      if (!id) {
+      const meta = mesh.metadata as { hotspotId?: HotspotId; discIndex?: number } | null;
+      if (!meta) {
         return false;
       }
-      return this.isPickable(id);
+      if (typeof meta.discIndex === 'number') {
+        return this.mediaOpen;
+      }
+      if (meta.hotspotId) {
+        return this.isPickable(meta.hotspotId);
+      }
+      return false;
     });
     if (!pick?.hit || !pick.pickedMesh) {
       return null;
     }
-    const meta = pick.pickedMesh.metadata as { hotspotId?: HotspotId } | null;
-    return meta?.hotspotId ?? null;
+    const meta = pick.pickedMesh.metadata as { hotspotId?: HotspotId; discIndex?: number } | null;
+    if (meta && typeof meta.discIndex === 'number') {
+      return { kind: 'disc', index: meta.discIndex };
+    }
+    if (meta?.hotspotId) {
+      return { kind: 'hotspot', id: meta.hotspotId };
+    }
+    return null;
   }
 
   private isPickable(id: HotspotId): boolean {
     if (this.phase === 'intro' || this.phase === 'entering') {
       return id === 'door';
     }
+    if (this.mediaOpen) {
+      return false;
+    }
     return id !== 'door';
   }
 
-  private applyHighlight(id: HotspotId): void {
+  private applyHotspotHighlight(id: HotspotId): void {
     this.meshesFor(id).forEach((mesh) => {
       mesh.renderOutline = true;
       mesh.outlineColor = ACCENT;
@@ -903,7 +1191,17 @@ export class RoomScene {
     this.canvas.style.cursor = 'pointer';
   }
 
-  private clearHighlight(): void {
+  private applyDiscHighlight(index: number): void {
+    const mesh = this.discs[index];
+    if (mesh) {
+      mesh.renderOutline = true;
+      mesh.outlineColor = ACCENT;
+      mesh.outlineWidth = 0.02;
+    }
+    this.canvas.style.cursor = 'pointer';
+  }
+
+  private clearHotspotHighlight(): void {
     if (!this.hoveredId) {
       return;
     }
@@ -911,6 +1209,24 @@ export class RoomScene {
       mesh.renderOutline = false;
     });
     this.canvas.style.cursor = '';
+  }
+
+  private clearDiscHighlight(): void {
+    if (this.hoveredDisc === null) {
+      return;
+    }
+    const mesh = this.discs[this.hoveredDisc];
+    if (mesh) {
+      mesh.renderOutline = false;
+    }
+    this.canvas.style.cursor = '';
+  }
+
+  private clearHighlights(): void {
+    this.clearHotspotHighlight();
+    this.clearDiscHighlight();
+    this.hoveredId = null;
+    this.hoveredDisc = null;
   }
 
   private meshesFor(id: HotspotId): Mesh[] {
@@ -924,8 +1240,7 @@ export class RoomScene {
     if (this.phase === 'entering') {
       return;
     }
-    this.clearHighlight();
-    this.hoveredId = null;
+    this.clearHighlights();
     this.callbacks.onHover?.(null);
     this.phase = 'entering';
     this.vhsValue = 1;

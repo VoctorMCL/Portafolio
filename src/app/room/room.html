@@ -7,17 +7,47 @@
     @if (!section() && !loading() && phase() !== 'entering') {
       <div class="hotspot-label" [style.left.px]="info.x" [style.top.px]="info.y">
         <span class="hotspot-label__dot" aria-hidden="true"></span>
-        {{ labelFor(info.id) }}
+        {{ label(info) }}
       </div>
     }
   }
 
-  @if (!hover() && !section() && !loading()) {
+  @if (!hover() && !section() && !loading() && !disc()) {
     @if (phase() === 'intro') {
       <p class="hint">Haz clic en la puerta para entrar</p>
     } @else if (phase() === 'idle') {
       <p class="hint">Haz clic en los objetos para explorar</p>
+    } @else if (phase() === 'focus') {
+      <p class="hint">Elige un disco · pulsa Esc para salir</p>
     }
+  }
+
+  @if (disc(); as project) {
+    <article class="disc-overlay" [style]="overlayStyle()">
+      <button class="disc-overlay__close" type="button" (click)="closeDisc()" aria-label="Expulsar disco">
+        <span aria-hidden="true">×</span>
+      </button>
+      <p class="disc-overlay__eyebrow">► Reproduciendo · {{ project.year }}</p>
+      <h2 class="disc-overlay__title">{{ project.title }}</h2>
+      <p class="disc-overlay__text">{{ project.summary }}</p>
+      @if (project.tech.length) {
+        <ul class="disc-overlay__tags">
+          @for (tech of project.tech; track tech) {
+            <li>{{ tech }}</li>
+          }
+        </ul>
+      }
+      <div class="disc-overlay__actions">
+        <a class="disc-overlay__btn" [href]="project.repoUrl" target="_blank" rel="noopener">
+          Ver en GitHub
+        </a>
+        @if (project.demoUrl) {
+          <a class="disc-overlay__btn disc-overlay__btn--ghost" [href]="project.demoUrl" target="_blank" rel="noopener">
+            Demo
+          </a>
+        }
+      </div>
+    </article>
   }
 
   <app-info-panel [section]="section()" (close)="closeSection()" />

@@ -167,6 +167,125 @@ export function screenCanvas(): HTMLCanvasElement {
   return canvas;
 }
 
+function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (ctx.measureText(candidate).width > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) {
+    lines.push(current);
+  }
+  return lines;
+}
+
+export function discCanvas(label: string, accent: string): HTMLCanvasElement {
+  const size = 256;
+  const { canvas, ctx } = surface(size, size);
+  const c = size / 2;
+
+  const metallic = ctx.createRadialGradient(c - 30, c - 30, 10, c, c, c);
+  metallic.addColorStop(0, '#dfe6f2');
+  metallic.addColorStop(0.5, '#a7b1c6');
+  metallic.addColorStop(1, '#6f7a90');
+  ctx.fillStyle = metallic;
+  ctx.beginPath();
+  ctx.arc(c, c, c - 1, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(c, c, c - 1, 0, Math.PI * 2);
+  ctx.clip();
+
+  ctx.globalAlpha = 0.18;
+  for (let r = 30; r < size; r += 12) {
+    ctx.strokeStyle = r % 24 === 0 ? accent : '#ffffff';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(c, c, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = accent;
+  ctx.beginPath();
+  ctx.arc(c, c, 84, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(6, 8, 16, 0.78)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 22px monospace';
+  const lines = wrapLines(ctx, label.toUpperCase(), 150).slice(0, 3);
+  const startY = c - ((lines.length - 1) * 24) / 2;
+  lines.forEach((line, i) => ctx.fillText(line, c, startY + i * 24));
+
+  ctx.fillStyle = '#0b0b12';
+  ctx.beginPath();
+  ctx.arc(c, c, 26, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#f2f5fb';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(c, c, 26, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.restore();
+  return canvas;
+}
+
+export function discScreenCanvas(title: string, language: string, accent: string): HTMLCanvasElement {
+  const { canvas, ctx } = surface(512, 384);
+  ctx.fillStyle = '#03070e';
+  ctx.fillRect(0, 0, 512, 384);
+
+  const glow = ctx.createRadialGradient(256, 150, 20, 256, 150, 320);
+  glow.addColorStop(0, `${accent}55`);
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, 512, 384);
+
+  ctx.fillStyle = 'rgba(120, 220, 255, 0.07)';
+  for (let y = 0; y < 384; y += 4) {
+    ctx.fillRect(0, y, 512, 1);
+  }
+
+  ctx.strokeStyle = `${accent}aa`;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(16, 16, 480, 352);
+
+  ctx.fillStyle = accent;
+  ctx.font = 'bold 20px monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText('► REPRODUCIENDO', 40, 66);
+
+  ctx.fillStyle = '#eaf5ff';
+  ctx.font = 'bold 46px monospace';
+  const lines = wrapLines(ctx, title, 430).slice(0, 2);
+  lines.forEach((line, i) => ctx.fillText(line, 40, 140 + i * 52));
+
+  ctx.fillStyle = '#8fb6d8';
+  ctx.font = '22px monospace';
+  ctx.fillText(language ? `lenguaje: ${language}` : 'repositorio de github', 40, 300);
+
+  ctx.fillStyle = accent;
+  ctx.fillRect(40, 322, 200, 30);
+  ctx.fillStyle = '#04121c';
+  ctx.font = 'bold 20px monospace';
+  ctx.fillText('VER EN GITHUB', 56, 344);
+
+  return canvas;
+}
+
 export function skyCanvas(): HTMLCanvasElement {
   const { canvas, ctx } = surface(1024, 512);
 
