@@ -77,8 +77,8 @@ interface Pose {
 }
 
 const INTRO: Pose = {
-  position: new Vector3(0, 1.78, 9.8),
-  target: new Vector3(0, 1.35, 3.4),
+  position: new Vector3(0, 1.55, 8.28),
+  target: new Vector3(0, 1.42, 4.6),
 };
 
 const IDLE: Pose = {
@@ -294,6 +294,15 @@ export class RoomScene {
   private transition?: { from: Pose; to: Pose; elapsed: number; duration: number };
   private doorPivot?: TransformNode;
   private doorTween?: number;
+  private elevatorLeft?: Mesh;
+  private elevatorRight?: Mesh;
+  private elevatorT = 0.25;
+  private elevatorOpening = false;
+  private chairRoot?: TransformNode;
+  private chairT = 0;
+  private static readonly CHAIR_HOME = new Vector3(0, 0, -2.2);
+  private static readonly CHAIR_PARK = new Vector3(1.85, 0, -2.3);
+  private static readonly CHAIR_PARK_YAW = -1;
   private phase: ScenePhase = 'intro';
   private goal: Pose = INTRO;
   private hoveredId: HotspotId | null = null;
@@ -344,6 +353,7 @@ export class RoomScene {
     this.buildEnvironment();
     this.buildExterior();
     this.buildInterior();
+    this.buildHallway();
     this.buildLights();
 
     try {
@@ -360,22 +370,30 @@ export class RoomScene {
 
     this.pipeline = new DefaultRenderingPipeline('pipe', true, this.scene, [this.camera]);
     this.pipeline.fxaaEnabled = true;
-    this.pipeline.samples = 2;
+    this.pipeline.samples = 4;
     this.pipeline.bloomEnabled = true;
-    this.pipeline.bloomThreshold = 0.8;
-    this.pipeline.bloomWeight = 0.05;
-    this.pipeline.bloomKernel = 12;
+    this.pipeline.bloomThreshold = 0.72;
+    this.pipeline.bloomWeight = 0.09;
+    this.pipeline.bloomKernel = 24;
     this.pipeline.bloomScale = 1.0;
     this.pipeline.sharpenEnabled = true;
-    this.pipeline.sharpen.edgeAmount = 0.18;
+    this.pipeline.sharpen.edgeAmount = 0.22;
     this.pipeline.sharpen.colorAmount = 1;
     this.pipeline.imageProcessing.toneMappingEnabled = true;
     this.pipeline.imageProcessing.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
-    this.pipeline.imageProcessing.contrast = 1.35;
-    this.pipeline.imageProcessing.exposure = 1.12;
+    this.pipeline.imageProcessing.contrast = 1.32;
+    this.pipeline.imageProcessing.exposure = 1.08;
+    this.pipeline.imageProcessing.ditheringEnabled = true;
+    this.pipeline.imageProcessing.ditheringIntensity = 0.04;
     this.pipeline.imageProcessing.vignetteEnabled = true;
-    this.pipeline.imageProcessing.vignetteWeight = 2.2;
+    this.pipeline.imageProcessing.vignetteWeight = 2.4;
     this.pipeline.imageProcessing.vignetteColor = new Color4(0.02, 0.0, 0.07, 0);
+    this.pipeline.grainEnabled = true;
+    this.pipeline.grain.intensity = 5;
+    this.pipeline.grain.animated = true;
+    this.pipeline.chromaticAberrationEnabled = true;
+    this.pipeline.chromaticAberration.aberrationAmount = 12;
+    this.pipeline.chromaticAberration.radialIntensity = 0.4;
 
     this.vhs = new PostProcess(
       'vhs',
@@ -597,7 +615,7 @@ export class RoomScene {
       return;
     }
     this.tvScreenTexture?.dispose();
-    this.tvScreenTexture = this.texture(canvas ?? screenCanvas());
+    this.tvScreenTexture = this.texture(canvas ?? screenCanvas(), 1, 1, false, true, false);
     this.tvScreenMat.emissiveTexture = this.tvScreenTexture;
   }
 
@@ -616,7 +634,9 @@ export class RoomScene {
     this.elapsed += dt;
 
     this.updateDoor(dt);
+    this.updateElevator(dt);
     this.updateDisc(dt);
+    this.updateChair(dt);
     this.updateCamera(dt);
 
     this.scene.render();
@@ -653,17 +673,48 @@ export class RoomScene {
     if (!this.doorPivot || this.doorTween === undefined) {
       return;
     }
-    const target = -Math.PI * 0.62;
+    const target = Math.PI * 0.62;
     this.doorTween = Math.min(1, this.doorTween + dt / 1.5);
     this.doorPivot.rotation.y = easeInOutCubic(this.doorTween) * target;
   }
 
-  private texture(canvas: HTMLCanvasElement, uScale = 1, vScale = 1, linear = false): DynamicTexture {
+  private updateElevator(dt: number): void {
+    if (!this.elevatorLeft || !this.elevatorRight || !this.elevatorOpening) {
+      return;
+    }
+    this.elevatorT = Math.min(1, this.elevatorT + dt / 1.0);
+    const offset = 0.53 + this.elevatorT * 1.06;
+    this.elevatorLeft.position.x = -offset;
+    this.elevatorRight.position.x = offset;
+  }
+
+  private updateChair(dt: number): void {
+    if (!this.chairRoot) {
+      return;
+    }
+    const target = this.goal === FOCUS.desk ? 1 : 0;
+    const step = dt / 0.9;
+    this.chairT = target === 1 ? Math.min(1, this.chairT + step) : Math.max(0, this.chairT - step);
+    const e = easeInOutCubic(this.chairT);
+    Vector3.LerpToRef(RoomScene.CHAIR_HOME, RoomScene.CHAIR_PARK, e, this.chairRoot.position);
+    this.chairRoot.rotation.y = RoomScene.CHAIR_PARK_YAW * e;
+  }
+
+  private texture(
+    canvas: HTMLCanvasElement,
+    uScale = 1,
+    vScale = 1,
+    linear = false,
+    flipU = false,
+    flipV = false,
+  ): DynamicTexture {
     const dt = new DynamicTexture(`tex-${this.texCounter++}`, { width: canvas.width, height: canvas.height }, this.scene, true);
     dt.getContext().drawImage(canvas, 0, 0);
     dt.update();
-    dt.uScale = uScale;
-    dt.vScale = vScale;
+    dt.uScale = flipU ? -uScale : uScale;
+    dt.vScale = flipV ? -vScale : vScale;
+    if (flipU) dt.uOffset = 1;
+    if (flipV) dt.vOffset = 1;
     dt.wrapU = Texture.WRAP_ADDRESSMODE;
     dt.wrapV = Texture.WRAP_ADDRESSMODE;
     dt.anisotropicFilteringLevel = 16;
@@ -793,7 +844,6 @@ export class RoomScene {
     siding.albedoTexture = this.texture(sidingSrc, 3, 2);
     this.bump(siding, sidingSrc, 3, 2, 2.5);
 
-    const trim = this.pbr('trim', '#15141f', { roughness: 0.6 });
     const roofMat = this.pbr('roof', '#0f0d18', { roughness: 0.7, metallic: 0.15 });
     const grass = this.pbr('grass', '#0c1a12', { roughness: 1 });
     grass.albedoTexture = this.texture(wallCanvas(), 6, 6);
@@ -809,11 +859,6 @@ export class RoomScene {
     this.box('facadeRight', { w: 0.08, h: 3.4, d: 8.2 }, new Vector3(4.22, 1.7, -0.1), siding);
     this.box('facadeBack', { w: 8.5, h: 3.4, d: 0.08 }, new Vector3(0, 1.7, -4.22), siding);
     const roof = this.box('roof', { w: 9.2, h: 0.5, d: 8.8 }, new Vector3(0, 3.62, -0.1), roofMat);
-
-    const step = this.slab('step', 3, 1.6, 0.2, 0.06, new Vector3(0, 0.1, 4.5), trim);
-
-    const doormat = this.slab('doormat', 1.5, 0.9, 0.05, 0.05, new Vector3(0, 0.22, 4.15), this.pbr('doormat', '#ffffff', { roughness: 1 }));
-    (doormat.material as PBRMaterial).albedoTexture = this.texture(doormatCanvas());
 
     const doorMat = this.pbr('door', '#3a2a55', { roughness: 0.5, metallic: 0.1 });
     const doorHinge = new TransformNode('hinge', this.scene);
@@ -845,40 +890,6 @@ export class RoomScene {
       this.box(`window${i}`, { w: 1.6, h: 1.3, d: 0.06 }, p, windowMat);
       this.box(`windowFrame${i}`, { w: 1.8, h: 1.5, d: 0.12 }, p.add(new Vector3(0, 0, -0.06)), pane);
     });
-
-    const porch = new PointLight('porch', new Vector3(1.6, 3.05, 4.18), this.scene);
-    porch.diffuse = hex('#ffb066');
-    porch.intensity = 14;
-    porch.range = 12;
-
-    const porchLamp = CreateSphere('porchLamp', { diameter: 0.22, segments: 16 }, this.scene);
-    porchLamp.position = new Vector3(1.6, 3.05, 4.14);
-    porchLamp.material = this.emissive('porchLampMat', hex('#ffb066'), 1.6);
-
-    const bushMat = this.pbr('bush', '#10241a', { roughness: 1 });
-    for (let i = 0; i < 6; i++) {
-      const bush = CreateSphere('bush' + i, { diameter: 0.9 + Math.random() * 0.6, segments: 24 }, this.scene);
-      jitterVertices(bush, 0.12);
-      bush.position = new Vector3(-3.6 + i * 1.45, 0.35, 4.7 + (i % 2) * 0.35);
-      bush.scaling.y = 0.7;
-      bush.material = bushMat;
-    }
-
-    const trunk = this.pbr('trunk', '#2a1c12', { roughness: 1 });
-    this.box('trunk', { w: 0.4, h: 3, d: 0.4 }, new Vector3(-6.5, 1.5, 6), trunk);
-    const leafMat = this.pbr('leaf', '#0f2418', { roughness: 1 });
-    for (let i = 0; i < 4; i++) {
-      const leaf = CreateSphere('leaf' + i, { diameter: 2.2 - i * 0.35, segments: 24 }, this.scene);
-      jitterVertices(leaf, 0.22);
-      leaf.position = new Vector3(-6.5, 3.2 + i * 0.6, 6);
-      leaf.material = leafMat;
-    }
-
-    const postMat = this.pbr('post', '#1c1a2a', { roughness: 0.5, metallic: 0.4 });
-    this.box('lampPost', { w: 0.16, h: 4.4, d: 0.16 }, new Vector3(5.6, 2.2, 5.6), postMat);
-    const lampHead = CreateSphere('lampHead', { diameter: 0.5, segments: 16 }, this.scene);
-    lampHead.position = new Vector3(5.6, 4.4, 5.6);
-    lampHead.material = this.emissive('lampHeadMat', hex('#a9c8ff'), 1.4);
 
     const skyMat = new StandardMaterial('skyMat', this.scene);
     skyMat.disableLighting = true;
@@ -929,6 +940,116 @@ export class RoomScene {
     this.buildDecor();
   }
 
+  private buildHallway(): void {
+    const hallWallSrc = wallCanvas();
+    const hallWall = this.pbr('hallWall', '#ffffff', { roughness: 0.95 });
+    hallWall.albedoTexture = this.texture(hallWallSrc, 2, 1);
+    this.bump(hallWall, hallWallSrc, 2, 1, 1.5);
+
+    const hallFloorSrc = planksCanvas();
+    const hallFloorMat = this.pbr('hallFloorMat', '#ffffff', { roughness: 0.55 });
+    hallFloorMat.albedoTexture = this.texture(hallFloorSrc, 1, 2);
+    this.bump(hallFloorMat, hallFloorSrc, 1, 2, 3);
+
+    const hallFloor = CreateGround('hallFloor', { width: 2.44, height: 4.76, subdivisions: 2 }, this.scene);
+    hallFloor.material = hallFloorMat;
+    hallFloor.position = new Vector3(0, 0.002, 6.28);
+
+    const hallCeil = CreateGround('hallCeil', { width: 2.44, height: 4.76, subdivisions: 1 }, this.scene);
+    hallCeil.material = hallWall;
+    hallCeil.position = new Vector3(0, 2.7, 6.28);
+    hallCeil.rotation.x = Math.PI;
+
+    this.box('hallWallL', { w: 0.12, h: 2.7, d: 4.76 }, new Vector3(-1.11, 1.35, 6.28), hallWall);
+    this.box('hallWallR', { w: 0.12, h: 2.7, d: 4.76 }, new Vector3(1.11, 1.35, 6.28), hallWall);
+    this.box('hallEnd', { w: 2.44, h: 2.7, d: 0.12 }, new Vector3(0, 1.35, 8.66), hallWall);
+
+    const hallBase = this.pbr('hallBase', '#0e0d16', { roughness: 0.6 });
+    this.box('hallBaseL', { w: 0.05, h: 0.16, d: 4.7 }, new Vector3(-1.06, 0.08, 6.25), hallBase);
+    this.box('hallBaseR', { w: 0.05, h: 0.16, d: 4.7 }, new Vector3(1.06, 0.08, 6.25), hallBase);
+
+    this.box('hallCoverL', { w: 0.39, h: 2.7, d: 0.06 }, new Vector3(-0.855, 1.35, 4.03), hallWall);
+    this.box('hallCoverR', { w: 0.39, h: 2.7, d: 0.06 }, new Vector3(0.855, 1.35, 4.03), hallWall);
+    this.box('hallCoverT', { w: 2.1, h: 0.4, d: 0.06 }, new Vector3(0, 2.5, 4.03), hallWall);
+
+    const doormat = this.slab('doormat', 1.3, 0.7, 0.03, 0.05, new Vector3(0, 0.02, 4.45), this.pbr('doormatMat', '#ffffff', { roughness: 1 }));
+    (doormat.material as PBRMaterial).albedoTexture = this.texture(doormatCanvas());
+
+    const runner = this.slab('hallRunner', 0.9, 2.4, 0.02, 0.06, new Vector3(0, 0.013, 6.15), this.pbr('hallRunnerMat', '#ffffff', { roughness: 1 }));
+    (runner.material as PBRMaterial).albedoTexture = this.texture(rugCanvas());
+
+    const picA = posterCanvas(['HOME', 'SWEET', 'HOME'], '#141030', '#6cd0ff');
+    const frameA = this.box('hallPicA', { w: 0.44, h: 0.56, d: 0.03 }, new Vector3(-1.02, 1.5, 5.4), this.pbr('hallPicAMat', '#ffffff', { roughness: 0.85 }));
+    (frameA.material as PBRMaterial).albedoTexture = this.texture(picA);
+    frameA.rotation.y = Math.PI / 2;
+
+    const picB = posterCanvas(['PISO', '3B'], '#241038', '#ff2fb0');
+    const frameB = this.box('hallPicB', { w: 0.4, h: 0.5, d: 0.03 }, new Vector3(1.02, 1.55, 6.1), this.pbr('hallPicBMat', '#ffffff', { roughness: 0.85 }));
+    (frameB.material as PBRMaterial).albedoTexture = this.texture(picB);
+    frameB.rotation.y = -Math.PI / 2;
+
+    const plate = this.box('hallPlate', { w: 0.14, h: 0.18, d: 0.04 }, new Vector3(0.9, 1.6, 4.09), this.pbr('hallPlateMat', '#161428', { roughness: 0.4, metallic: 0.4 }));
+    void plate;
+
+    [5.3, 6.7].forEach((z, i) => {
+      const fixture = CreateCylinder('hallLamp' + i, { height: 0.04, diameter: 0.24, tessellation: 20 }, this.scene);
+      fixture.position = new Vector3(0, 2.67, z);
+      fixture.material = this.emissive('hallLampMat' + i, hex('#ffd9a0'), 1.4);
+      const light = new PointLight('hallPt' + i, new Vector3(0, 2.45, z), this.scene);
+      light.diffuse = hex('#ffc9a0');
+      light.intensity = 5;
+      light.range = 6;
+    });
+
+    const metal = this.pbr('elevMetal', '#9aa2ae', { roughness: 0.32, metallic: 0.9 });
+    const metalDark = this.pbr('elevMetalDark', '#5a606c', { roughness: 0.4, metallic: 0.8 });
+
+    this.box('elevBack', { w: 2.1, h: 2.62, d: 0.05 }, new Vector3(0, 1.31, 8.57), metal);
+    this.box('elevSideL', { w: 0.04, h: 2.56, d: 1.05 }, new Vector3(-1.03, 1.28, 8.02), metal);
+    this.box('elevSideR', { w: 0.04, h: 2.56, d: 1.05 }, new Vector3(1.03, 1.28, 8.02), metal);
+    this.box('elevCeil', { w: 2.1, h: 0.04, d: 1.1 }, new Vector3(0, 2.66, 8.05), metal);
+    this.box('elevFloor', { w: 2.1, h: 0.02, d: 1.1 }, new Vector3(0, 0.012, 8.05), metalDark);
+    this.box('elevThreshold', { w: 2.1, h: 0.024, d: 0.1 }, new Vector3(0, 0.012, 7.5), metal);
+    this.box('elevHeader', { w: 2.1, h: 0.42, d: 0.14 }, new Vector3(0, 2.49, 7.5), metalDark);
+
+    const elevLightPanel = this.box('elevLightPanel', { w: 0.8, h: 0.02, d: 0.5 }, new Vector3(0, 2.62, 8.05), this.emissive('elevLightPanelMat', hex('#dfe8ff'), 1.3));
+    void elevLightPanel;
+    const cabinLight = new PointLight('elevLight', new Vector3(0, 2.4, 8.0), this.scene);
+    cabinLight.diffuse = hex('#dfe8ff');
+    cabinLight.intensity = 3.5;
+    cabinLight.range = 4.5;
+
+    const elevDoorMat = this.pbr('elevDoorMat', '#aab0bc', { roughness: 0.28, metallic: 0.95 });
+    const left = this.box('elevDoorL', { w: 1.06, h: 2.3, d: 0.06 }, new Vector3(0, 1.15, 7.48), elevDoorMat);
+    const right = this.box('elevDoorR', { w: 1.06, h: 2.3, d: 0.06 }, new Vector3(0, 1.15, 7.48), elevDoorMat);
+    this.elevatorLeft = left;
+    this.elevatorRight = right;
+    left.position.x = -(0.53 + this.elevatorT * 1.06);
+    right.position.x = 0.53 + this.elevatorT * 1.06;
+
+    const stripMat = this.emissive('elevStripMat', NEON_CYAN, 1.2);
+    const stripL = this.box('elevStripL', { w: 0.86, h: 0.02, d: 0.012 }, new Vector3(0, 0.7, 0.037), stripMat);
+    stripL.parent = left;
+    const stripR = this.box('elevStripR', { w: 0.86, h: 0.02, d: 0.012 }, new Vector3(0, 0.7, 0.037), stripMat);
+    stripR.parent = right;
+
+    left.metadata = { hotspotId: 'door' as HotspotId };
+    right.metadata = { hotspotId: 'door' as HotspotId };
+    this.doorPickable.push(left, right);
+
+    const callPanel = this.box('elevCall', { w: 0.05, h: 0.42, d: 0.16 }, new Vector3(1.02, 1.2, 6.9), metalDark);
+    callPanel.metadata = { hotspotId: 'door' as HotspotId };
+    this.doorPickable.push(callPanel);
+    [1.32, 1.2, 1.08].forEach((y, i) => {
+      const btn = CreateCylinder('elevBtn' + i, { height: 0.02, diameter: 0.05, tessellation: 16 }, this.scene);
+      btn.rotation.z = Math.PI / 2;
+      btn.position = new Vector3(0.99, y, 6.9);
+      btn.material = this.emissive('elevBtnMat' + i, i === 0 ? NEON_PINK : hex('#cfe0ff'), 1.2);
+      btn.metadata = { hotspotId: 'door' as HotspotId };
+      this.doorPickable.push(btn);
+    });
+  }
+
   private buildDesk(): void {
     const deskSrc = woodCanvas();
     const wood = this.pbr('deskWood', '#ffffff', { roughness: 0.45 });
@@ -957,7 +1078,7 @@ export class RoomScene {
 
     const screenMat = new PBRMaterial('screenMat', this.scene);
     screenMat.albedoColor = Color3.Black();
-    screenMat.emissiveTexture = this.texture(screenCanvas());
+    screenMat.emissiveTexture = this.texture(screenCanvas(), 1, 1, false, true, false);
     screenMat.emissiveColor = Color3.White();
     screenMat.emissiveIntensity = 1.5;
     screenMat.metallic = 0;
@@ -968,12 +1089,18 @@ export class RoomScene {
     screenMat.clearCoat.roughness = 0.12;
 
     const bezel = this.pbr('bezel', '#0a0a12', { roughness: 0.4, metallic: 0.3 });
-    this.box('monitor', { w: 1.7, h: 1.0, d: 0.06 }, new Vector3(0, 1.42, -3.42), bezel);
-    this.box('monitorScreen', { w: 1.56, h: 0.86, d: 0.02 }, new Vector3(0, 1.42, -3.37), screenMat);
+    const monitorBody = this.box('monitor', { w: 1.7, h: 1.0, d: 0.06 }, new Vector3(0, 1.42, -3.42), bezel);
+    const monitorScreen = this.box('monitorScreen', { w: 1.56, h: 0.86, d: 0.02 }, new Vector3(0, 1.42, -3.37), screenMat);
 
     const kb = this.slab('keyboard', 1.0, 0.36, 0.04, 0.03, new Vector3(0, 0.79, -3.0), this.pbr('kb', '#1a1a24', { roughness: 0.6 }));
+    const kbTop = this.slab('kbTop', 0.92, 0.28, 0.02, 0.02, new Vector3(0, 0.815, -3.0), this.pbr('kbTop', '#242433', { roughness: 0.5 }));
+    const keyMat = this.pbr('kbKeyMat', '#33364a', { roughness: 0.45 });
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 12; c++) {
+        this.slab(`key-${r}-${c}`, 0.055, 0.058, 0.014, 0.008, new Vector3(-0.4 + c * 0.073, 0.828, -3.12 + r * 0.058), this.pbr('kbKey2', '#2b2d3c', { roughness: 0.5 }));
+      }
+    }
     void kb;
-    this.slab('kbTop', 0.92, 0.28, 0.02, 0.02, new Vector3(0, 0.815, -3.0), this.pbr('kbTop', '#242433', { roughness: 0.5 }));
 
     const mouse = CreateSphere('mouse', { diameter: 0.13, segments: 16 }, this.scene);
     mouse.scaling = new Vector3(1, 0.7, 1.4);
@@ -983,6 +1110,46 @@ export class RoomScene {
     const mug = CreateCylinder('mug', { height: 0.14, diameterTop: 0.12, diameterBottom: 0.1, tessellation: 20 }, this.scene);
     mug.position = new Vector3(-0.75, 0.82, -3.15);
     mug.material = this.pbr('mugMat', '#c95a3c', { roughness: 0.5 });
+    const mugInner = CreateCylinder('mugInner', { height: 0.02, diameter: 0.1, tessellation: 20 }, this.scene);
+    mugInner.position = new Vector3(-0.75, 0.895, -3.15);
+    mugInner.material = this.pbr('mugCoffee', '#3a1f14', { roughness: 0.35 });
+
+    const succulentPot = CreateCylinder('succulentPot', { height: 0.1, diameterTop: 0.11, diameterBottom: 0.08, tessellation: 16 }, this.scene);
+    succulentPot.position = new Vector3(1.15, 0.79, -2.75);
+    succulentPot.material = this.pbr('succulentPotMat', '#b96a4b', { roughness: 0.8 });
+    const succulentLeaves: Mesh[] = [];
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const leaf = CreateSphere('succulentLeaf' + i, { diameter: 0.07, segments: 10 }, this.scene);
+      leaf.scaling = new Vector3(1, 0.5, 1.6);
+      leaf.position = new Vector3(1.15 + Math.cos(a) * 0.04, 0.87, -2.75 + Math.sin(a) * 0.04);
+      leaf.rotation.y = a;
+      leaf.material = this.pbr('succulentMat', '#3f9d6a', { roughness: 0.9 });
+      succulentLeaves.push(leaf);
+    }
+
+    const phone = this.box('phone', { w: 0.09, h: 0.16, d: 0.012 }, new Vector3(0.52, 0.85, -3.05), this.pbr('phoneMat', '#0c0c14', { roughness: 0.25, metallic: 0.3 }));
+    phone.rotation.x = -0.18;
+    phone.rotation.y = 0.5;
+    const phoneGlow = this.box('phoneGlow', { w: 0.076, h: 0.14, d: 0.002 }, new Vector3(0.52, 0.85, -3.05), this.emissive('phoneGlowMat', NEON_CYAN, 0.7));
+    phoneGlow.rotation.copyFrom(phone.rotation);
+    phoneGlow.position.addInPlace(new Vector3(0, 0, 0.008));
+
+    const cable = CreateTorus('cable', { diameter: 0.14, thickness: 0.006, tessellation: 32 }, this.scene);
+    cable.position = new Vector3(1.32, 0.79, -3.1);
+    cable.rotation.x = Math.PI / 2.2;
+    cable.material = this.pbr('cableMat', '#0a0a10', { roughness: 0.7 });
+
+    const bookStack: Mesh[] = [];
+    [
+      { c: '#457b9d', y: 0.795, w: 0.28, d: 0.2 },
+      { c: '#e63946', y: 0.815, w: 0.26, d: 0.19 },
+      { c: '#2a9d8f', y: 0.833, w: 0.24, d: 0.18 },
+    ].forEach((b, i) => {
+      const nb = this.box('deskBook' + i, { w: b.w, h: 0.02, d: b.d }, new Vector3(-0.45, b.y, -2.8), this.pbr('deskBookMat' + i, b.c, { roughness: 0.7 }));
+      nb.rotation.y = (i - 1) * 0.12;
+      bookStack.push(nb);
+    });
 
     const lampArm = CreateCylinder('lampArm', { height: 0.5, diameter: 0.04, tessellation: 12 }, this.scene);
     lampArm.position = new Vector3(-1.15, 1.0, -3.45);
@@ -1002,38 +1169,72 @@ export class RoomScene {
     lampLight.position = new Vector3(-0.95, 1.2, -3.45);
 
     const postitColors = ['#ffd166', '#ef476f', '#06d6a0'];
+    const postits: Mesh[] = [];
 
     const headsetBand = CreateTorus('hsBand', { diameter: 0.34, thickness: 0.05, tessellation: 24 }, this.scene);
     headsetBand.position = new Vector3(0, 1.0, -3.35);
     headsetBand.rotation.x = Math.PI / 2.2;
     headsetBand.material = this.pbr('hsMat', '#141420', { roughness: 0.6 });
+    const cups: Mesh[] = [];
     [-0.17, 0.17].forEach((dx, i) => {
       const cup = CreateCylinder('hsCup' + i, { height: 0.08, diameter: 0.24, tessellation: 18 }, this.scene);
       cup.rotation.z = Math.PI / 2;
       cup.position = new Vector3(dx, 0.92, -3.35);
       cup.material = this.pbr('hsCupMat', '#1c1c2a', { roughness: 0.5 });
+      cups.push(cup);
     });
 
     postitColors.forEach((c, i) => {
       const note = this.slab('postit' + i, 0.12, 0.12, 0.005, 0.01, new Vector3(1.15, 0.78, -3.3 + i * 0.12), this.pbr('postitMat' + i, c, { roughness: 1 }));
       note.rotation.y = 0.2;
+      postits.push(note);
     });
 
     const papers = this.slab('papers', 0.34, 0.24, 0.012, 0.012, new Vector3(0.72, 0.781, -2.95), this.pbr('papersMat', '#e8e4d8', { roughness: 0.92 }));
     papers.rotation.y = 0.35;
-    const papers2 = this.slab('papers2', 0.3, 0.22, 0.01, 0.01, new Vector3(0.7, 0.791, -2.97), this.pbr('papers2Mat', '#d9d3c3', { roughness: 0.92 }));
+    const papers2 = this.slab('papers2', 0.34, 0.24, 0.012, 0.012, new Vector3(0.7, 0.791, -2.97), this.pbr('papers2Mat', '#d9d3c3', { roughness: 0.92 }));
     papers2.rotation.y = 0.12;
 
     const penColors = ['#2b6fff', '#ff5c8a'];
+    const pens: Mesh[] = [];
     [-0.03, 0.02].forEach((dx, i) => {
       const pen = CreateCylinder('pen' + i, { height: 0.22, diameter: 0.014, tessellation: 10 }, this.scene);
       pen.position = new Vector3(-0.75 + dx, 0.95, -3.15 + (i ? 0.025 : -0.02));
       pen.rotation.z = 0.3 - i * 0.6;
       pen.rotation.x = i ? -0.25 : 0.2;
       pen.material = this.pbr('penMat' + i, penColors[i], { roughness: 0.35 });
+      pens.push(pen);
     });
 
-    const deskHotspot: Mesh[] = [top, monitorBase, monitorStand];
+    void mugInner;
+
+    const deskHotspot: Mesh[] = [
+      top,
+      monitorBase,
+      monitorStand,
+      monitorBody,
+      monitorScreen,
+      kb,
+      kbTop,
+      mouse,
+      mug,
+      mugInner,
+      succulentPot,
+      ...succulentLeaves,
+      phone,
+      phoneGlow,
+      cable,
+      ...bookStack,
+      lampArm,
+      lampHead,
+      lampBulb,
+      headsetBand,
+      papers,
+      papers2,
+      ...cups,
+      ...postits,
+      ...pens,
+    ];
     deskHotspot.forEach((m) => {
       m.metadata = { hotspotId: 'desk' as HotspotId };
     });
@@ -1059,25 +1260,78 @@ export class RoomScene {
     });
     this.box('shelfBack', { w: 0.08, h: 2.5, d: 2.3 }, new Vector3(x - 0.2, 1.35, -1.4), this.pbr('shelfBackMat', '#241a30', { roughness: 0.8 })).parent = shelf;
 
-    const bookColors = ['#e63946', '#457b9d', '#2a9d8f', '#f4a261', '#9b5de5', '#ff006e', '#3a86ff'];
-    const bookMats = bookColors.map((c, i) => this.pbr('bookMat' + i, c, { roughness: 0.85 }));
-    for (let shelfIdx = 0; shelfIdx < 4; shelfIdx++) {
-      let offset = -0.85;
-      while (offset < 0.85) {
-        const w = 0.08 + Math.random() * 0.1;
-        const h = 0.28 + Math.random() * 0.14;
+    const bookColors = ['#e63946', '#457b9d', '#2a9d8f', '#f4a261', '#9b5de5', '#ff006e', '#3a86ff', '#ffb703'];
+    const bookMats = bookColors.map((c, i) => this.pbr('bookMat' + i, c, { roughness: 0.8 }));
+    const pageMat = this.pbr('bookPages', '#efe6d0', { roughness: 0.9 });
+    const shelfHeights = [0.4, 1.05, 1.7, 2.35];
+    for (let shelfIdx = 0; shelfIdx < shelfHeights.length; shelfIdx++) {
+      const boardY = shelfHeights[shelfIdx];
+      let offset = -0.82;
+      while (offset < 0.78) {
+        const thickness = 0.035 + Math.random() * 0.06;
+        const h = 0.26 + Math.random() * 0.16;
+        const depth = 0.24 + Math.random() * 0.06;
         const colorIndex = (((shelfIdx * 3 + Math.floor(offset * 10)) % bookColors.length) + bookColors.length) % bookColors.length;
+        const z = -1.4 + offset + thickness / 2;
         const book = this.box(
           `book-${shelfIdx}-${offset.toFixed(2)}`,
-          { w: 0.42, h, d: w },
-          new Vector3(x, [0.4, 1.05, 1.7, 2.35][shelfIdx] + h / 2 + 0.03, -1.4 + offset + w / 2),
+          { w: depth, h, d: thickness },
+          new Vector3(-3.86, boardY + h / 2 + 0.03, z),
           bookMats[colorIndex],
         );
-        book.rotation.x = (Math.random() - 0.5) * 0.14;
+        book.rotation.z = (Math.random() - 0.5) * 0.1;
+        const pages = this.box(
+          `bookPages-${shelfIdx}-${offset.toFixed(2)}`,
+          { w: depth * 0.92, h: 0.012, d: thickness * 0.9 },
+          new Vector3(-3.86, boardY + h + 0.036, z),
+          pageMat,
+        );
+        pages.rotation.z = book.rotation.z;
         pickables.push(book);
-        offset += w + 0.02;
+        offset += thickness + 0.012;
       }
     }
+
+    const photo = posterCanvas(['DEV', 'LIFE'], '#1b1430', '#6cd0ff');
+    const frame = this.slab('shelfFrame', 0.3, 0.4, 0.03, 0.01, new Vector3(-3.86, 1.35, -2.28), this.pbr('frameMat', '#ffffff', { roughness: 0.8 }));
+    (frame.material as PBRMaterial).albedoTexture = this.texture(photo, 1, 1, false, true, false);
+    frame.rotation.y = Math.PI / 2;
+    frame.rotation.z = 0.06;
+
+    const clock = CreateCylinder('shelfClock', { height: 0.04, diameter: 0.26, tessellation: 28 }, this.scene);
+    clock.rotation.z = Math.PI / 2;
+    clock.position = new Vector3(-3.88, 2.14, -2.35);
+    clock.material = this.pbr('clockMat', '#161428', { roughness: 0.4, metallic: 0.4 });
+    const clockFace = CreateCylinder('clockFace', { height: 0.012, diameter: 0.22, tessellation: 28 }, this.scene);
+    clockFace.rotation.z = Math.PI / 2;
+    clockFace.position = new Vector3(-3.855, 2.14, -2.35);
+    clockFace.material = this.emissive('clockFaceMat', hex('#dfe8ff'), 0.5);
+
+    const lyingBooks: Mesh[] = [];
+    [
+      { c: '#9b5de5', y: 0.44, w: 0.26, d: 0.2, x: -3.9, z: -0.5 },
+      { c: '#f4a261', y: 0.46, w: 0.24, d: 0.18, x: -3.9, z: -0.5 },
+    ].forEach((b, i) => {
+      const lb = this.box('lyingBook' + i, { w: b.d, h: 0.02, d: b.w }, new Vector3(b.x, b.y, b.z), this.pbr('lyingBookMat' + i, b.c, { roughness: 0.85 }));
+      lb.rotation.y = 0.15 * (i ? -1 : 1);
+      lyingBooks.push(lb);
+    });
+
+    const shelfCandle = CreateCylinder('shelfCandle', { height: 0.18, diameterTop: 0.06, diameterBottom: 0.06, tessellation: 16 }, this.scene);
+    shelfCandle.position = new Vector3(-3.86, 1.82, -2.3);
+    shelfCandle.material = this.pbr('candleMat', '#e8d8b0', { roughness: 0.85 });
+    const candleFlame = CreateSphere('candleFlame', { diameter: 0.05, segments: 8 }, this.scene);
+    candleFlame.scaling.y = 1.6;
+    candleFlame.position = new Vector3(-3.86, 1.95, -2.3);
+    candleFlame.material = this.emissive('flameMat', hex('#ffb347'), 1.8);
+
+    const globeStand = CreateCylinder('globeStand', { height: 0.06, diameter: 0.16, tessellation: 18 }, this.scene);
+    globeStand.position = new Vector3(-3.86, 0.43, 0.3);
+    globeStand.material = this.pbr('globeStandMat', '#3a2f1f', { roughness: 0.6 });
+    const globe = CreateSphere('globe', { diameter: 0.24, segments: 24 }, this.scene);
+    globe.position = new Vector3(-3.86, 0.58, 0.3);
+    globe.material = this.pbr('globeMat', '#2a5d8f', { roughness: 0.5 });
+    globe.rotation.z = -0.4;
 
     const trophyStem = CreateCylinder('trophyStem', { height: 0.16, diameter: 0.05, tessellation: 12 }, this.scene);
     trophyStem.position = new Vector3(x, 1.78, -0.55);
@@ -1096,6 +1350,20 @@ export class RoomScene {
       leaf.scaling.y = 1.6;
       leaf.material = this.pbr('sLeafMat' + i, '#2f7d4f', { roughness: 1 });
     }
+
+    pickables.push(
+      frame,
+      clock,
+      clockFace,
+      shelfCandle,
+      candleFlame,
+      globe,
+      globeStand,
+      trophyStem,
+      trophyCup,
+      plantPot,
+      ...lyingBooks,
+    );
 
     pickables.forEach((m) => {
       m.metadata = { hotspotId: 'shelf' as HotspotId };
@@ -1122,8 +1390,8 @@ export class RoomScene {
 
     const tvPickables: Mesh[] = [];
 
-    const tvBody = this.box('tvBody', { w: 0.68, h: 0.64, d: 0.84 }, new Vector3(x + 0.08, 1.03, tvZ), plastic);
-    const tvBezel = this.box('tvBezel', { w: 0.05, h: 0.62, d: 0.78 }, new Vector3(3.45, 1.03, tvZ), metal);
+    const tvBody = this.box('tvBody', { w: 0.68, h: 0.68, d: 0.9 }, new Vector3(x + 0.08, 1.03, tvZ), plastic);
+    const tvBezel = this.box('tvBezel', { w: 0.052, h: 0.66, d: 0.84 }, new Vector3(3.452, 1.03, tvZ), metal);
 
     const screenMat = new PBRMaterial('tvScreenMat', this.scene);
     screenMat.albedoColor = Color3.Black();
@@ -1136,7 +1404,8 @@ export class RoomScene {
     screenMat.clearCoat.intensity = 1;
     screenMat.clearCoat.roughness = 0.1;
     this.tvScreenMat = screenMat;
-    const screenMesh = this.box('tvScreen', { w: 0.02, h: 0.5, d: 0.66 }, new Vector3(3.43, 1.03, tvZ), screenMat);
+    const screenMesh = this.box('tvScreen', { w: 0.72, h: 0.54, d: 0.022 }, new Vector3(3.435, 1.03, tvZ), screenMat);
+    screenMesh.rotation.y = -Math.PI / 2;
     this.setScreen(null);
 
     tvPickables.push(tvBody, tvBezel, screenMesh);
@@ -1180,13 +1449,134 @@ export class RoomScene {
     this.anchors.set('tv', new Vector3(3.2, 1.2, tvZ));
   }
 
+  private buildChair(): void {
+    const root = new TransformNode('chairRoot', this.scene);
+    root.position.copyFrom(RoomScene.CHAIR_HOME);
+    this.chairRoot = root;
+
+    const fabric = this.pbr('chairFabric', '#1a1526', { roughness: 0.9 });
+    const accent = this.pbr('chairAccent', '#2a2040', { roughness: 0.8 });
+    const darkMetal = this.pbr('chairMetal', '#26242f', { roughness: 0.35, metallic: 0.7 });
+    const chrome = this.pbr('chairChrome', '#c9ccd4', { roughness: 0.22, metallic: 0.95 });
+    const armPadMat = this.pbr('chairArmPad', '#15121f', { roughness: 0.75 });
+    const glow = this.emissive('chairGlowMat', NEON_PURPLE, 0.9);
+    const edgeGlow = this.emissive('chairEdgeMat', NEON_CYAN, 1.1);
+
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      const leg = chamferBox('chairLeg' + i, 0.46, 0.035, 0.07, this.scene);
+      leg.position = new Vector3(Math.cos(a) * 0.25, 0.05, Math.sin(a) * 0.25);
+      leg.rotation.y = -a;
+      leg.material = darkMetal;
+      leg.parent = root;
+
+      const wheel = CreateCylinder('chairWheel' + i, { height: 0.03, diameter: 0.08, tessellation: 16 }, this.scene);
+      wheel.rotation.y = -a;
+      wheel.rotation.x = Math.PI / 2;
+      wheel.position = new Vector3(Math.cos(a) * 0.47, 0.04, Math.sin(a) * 0.47);
+      wheel.material = darkMetal;
+      wheel.parent = root;
+    }
+
+    const hub = CreateCylinder('chairHub', { height: 0.05, diameter: 0.14, tessellation: 20 }, this.scene);
+    hub.position = new Vector3(0, 0.05, 0);
+    hub.material = darkMetal;
+    hub.parent = root;
+
+    const sleeve = CreateCylinder('chairSleeve', { height: 0.18, diameter: 0.14, tessellation: 18 }, this.scene);
+    sleeve.position = new Vector3(0, 0.15, 0);
+    sleeve.material = fabric;
+    sleeve.parent = root;
+
+    const piston = CreateCylinder('chairPiston', { height: 0.32, diameter: 0.062, tessellation: 16 }, this.scene);
+    piston.position = new Vector3(0, 0.28, 0);
+    piston.material = chrome;
+    piston.parent = root;
+
+    const mechanism = chamferBox('chairMech', 0.44, 0.05, 0.4, this.scene);
+    mechanism.position = new Vector3(0, 0.4, 0);
+    mechanism.material = darkMetal;
+    mechanism.parent = root;
+
+    const underglow = chamferBox('chairUnderglow', 0.6, 0.015, 0.58, this.scene);
+    underglow.position = new Vector3(0, 0.422, 0);
+    underglow.material = glow;
+    underglow.parent = root;
+
+    const seat = this.slab('chairSeat', 0.64, 0.62, 0.13, 0.12, new Vector3(0, 0.5, 0), fabric);
+    seat.parent = root;
+
+    const seatBase = chamferBox('chairSeatBase', 0.58, 0.03, 0.56, this.scene);
+    seatBase.position = new Vector3(0, 0.445, 0);
+    seatBase.material = darkMetal;
+    seatBase.parent = root;
+
+    const bracketL = chamferBox('chairBracketL', 0.06, 0.2, 0.1, this.scene);
+    bracketL.position = new Vector3(-0.16, 0.56, 0.24);
+    bracketL.rotation.x = 0.16;
+    bracketL.material = darkMetal;
+    bracketL.parent = root;
+    const bracketR = chamferBox('chairBracketR', 0.06, 0.2, 0.1, this.scene);
+    bracketR.position = new Vector3(0.16, 0.56, 0.24);
+    bracketR.rotation.x = 0.16;
+    bracketR.material = darkMetal;
+    bracketR.parent = root;
+
+    const backGroup = new TransformNode('chairBackGroup', this.scene);
+    backGroup.position = new Vector3(0, 1.0, 0.3);
+    backGroup.rotation.x = 0.16;
+    backGroup.parent = root;
+
+    const back = chamferBox('chairBack', 0.5, 0.78, 0.1, this.scene);
+    back.material = fabric;
+    back.parent = backGroup;
+
+    [-0.26, 0.26].forEach((x, i) => {
+      const bolster = chamferBox('chairBolster' + i, 0.11, 0.74, 0.16, this.scene);
+      bolster.position = new Vector3(x, -0.01, -0.02);
+      bolster.material = accent;
+      bolster.parent = backGroup;
+
+      const strip = chamferBox('chairBackGlow' + i, 0.02, 0.6, 0.015, this.scene);
+      strip.position = new Vector3(x > 0 ? 0.245 : -0.245, 0, 0.062);
+      strip.material = edgeGlow;
+      strip.parent = backGroup;
+    });
+
+    const lumbar = chamferBox('chairLumbar', 0.36, 0.17, 0.09, this.scene);
+    lumbar.position = new Vector3(0, -0.23, -0.085);
+    lumbar.material = accent;
+    lumbar.parent = backGroup;
+
+    const headrest = chamferBox('chairHeadrest', 0.32, 0.16, 0.1, this.scene);
+    headrest.position = new Vector3(0, 0.47, 0.04);
+    headrest.material = accent;
+    headrest.parent = backGroup;
+    const headrestStrap = chamferBox('chairHeadStrap', 0.2, 0.03, 0.12, this.scene);
+    headrestStrap.position = new Vector3(0, 0.38, 0.03);
+    headrestStrap.material = darkMetal;
+    headrestStrap.parent = backGroup;
+
+    [-0.34, 0.34].forEach((x, i) => {
+      const post = chamferBox('chairArmPost' + i, 0.055, 0.24, 0.06, this.scene);
+      post.position = new Vector3(x, 0.63, 0.06);
+      post.material = darkMetal;
+      post.parent = root;
+
+      const pad = chamferBox('chairArmPad' + i, 0.1, 0.045, 0.34, this.scene);
+      pad.position = new Vector3(x, 0.77, 0.02);
+      pad.material = armPadMat;
+      pad.parent = root;
+    });
+  }
+
   private buildDecor(): void {
     const posterA = posterCanvas(['<>', 'CÓDIGO', '& CAFÉ'], '#1a1030', '#39e0ff');
     const posterB = posterCanvas(['1UP', 'RETRO', 'CLUB'], '#2a0f24', '#ff2fb0');
     const backPoster = this.slab('posterA', 0.62, 0.02, 0.82, 0.01, new Vector3(-2.4, 1.9, -3.98), this.pbr('posterAMat', '#ffffff', { roughness: 0.9 }));
-    (backPoster.material as PBRMaterial).albedoTexture = this.texture(posterA);
+    (backPoster.material as PBRMaterial).albedoTexture = this.texture(posterA, 1, 1, false, true, false);
     const sidePoster = this.slab('posterB', 0.62, 0.02, 0.82, 0.01, new Vector3(4.05, 1.85, 0.4), this.pbr('posterBMat', '#ffffff', { roughness: 0.9 }));
-    (sidePoster.material as PBRMaterial).albedoTexture = this.texture(posterB);
+    (sidePoster.material as PBRMaterial).albedoTexture = this.texture(posterB, 1, 1, false, true, false);
     sidePoster.rotation.y = Math.PI / 2;
 
     const ring = CreateTorus('neonRing', { diameter: 1.5, thickness: 0.045, tessellation: 48 }, this.scene);
@@ -1216,22 +1606,94 @@ export class RoomScene {
       bulb.material = i % 2 ? fairyCool : fairyWarm;
     }
 
-    const chairSeat = this.slab('chairSeat', 0.6, 0.6, 0.12, 0.1, new Vector3(0, 0.48, -2.2), this.pbr('chairMat', '#140f1f', { roughness: 0.5 }));
-    const chairBack = this.box('chairBack', { w: 0.6, h: 0.9, d: 0.12 }, new Vector3(0, 0.95, -2.45), this.pbr('chairBackMat', '#1a1226', { roughness: 0.5 }));
-    chairBack.rotation.x = -0.12;
-    const chairPole = CreateCylinder('chairPole', { height: 0.42, diameter: 0.07, tessellation: 12 }, this.scene);
-    chairPole.position = new Vector3(0, 0.22, -2.2);
-    chairPole.material = this.pbr('chairMetal', '#26242f', { roughness: 0.4, metallic: 0.7 });
-    for (let i = 0; i < 5; i++) {
-      const a = (i / 5) * Math.PI * 2;
-      const arm = chamferBox('chairArm' + i, 0.4, 0.03, 0.05, this.scene);
-      arm.position = new Vector3(Math.cos(a) * 0.2, 0.06, -2.2 + Math.sin(a) * 0.2);
-      arm.rotation.y = -a;
-      arm.material = chairPole.material;
-      const wheel = CreateSphere('wheel' + i, { diameter: 0.07, segments: 8 }, this.scene);
-      wheel.position = new Vector3(Math.cos(a) * 0.4, 0.03, -2.2 + Math.sin(a) * 0.4);
-      wheel.material = chairPole.material;
+    this.buildChair();
+
+    const woodDeco = this.pbr('decoWood', '#3a2b1f', { roughness: 0.7 });
+
+    const floorPot = CreateCylinder('floorPot', { height: 0.5, diameterTop: 0.44, diameterBottom: 0.34, tessellation: 24 }, this.scene);
+    floorPot.position = new Vector3(-3.5, 0.25, -3.55);
+    floorPot.material = this.pbr('floorPotMat', '#8a5a44', { roughness: 0.85 });
+    const floorStem = CreateCylinder('floorStem', { height: 0.9, diameter: 0.06, tessellation: 10 }, this.scene);
+    floorStem.position = new Vector3(-3.5, 0.9, -3.55);
+    floorStem.material = this.pbr('floorStemMat', '#2f5228', { roughness: 0.9 });
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2;
+      const r = 0.16 + Math.random() * 0.22;
+      const leaf = CreateSphere('floorLeaf' + i, { diameter: 0.24 + Math.random() * 0.16, segments: 12 }, this.scene);
+      leaf.scaling = new Vector3(0.5, 1.5, 1);
+      leaf.position = new Vector3(-3.5 + Math.cos(a) * r * 0.5, 1.15 + Math.random() * 0.5, -3.55 + Math.sin(a) * r);
+      leaf.rotation.z = (Math.random() - 0.5) * 0.8;
+      leaf.rotation.y = a;
+      leaf.material = this.pbr('floorLeafMat', '#2f7d4f', { roughness: 1 });
     }
+
+    const bean = CreateSphere('beanbag', { diameter: 0.95, segments: 28 }, this.scene);
+    bean.scaling = new Vector3(1, 0.55, 1);
+    bean.position = new Vector3(2.8, 0.24, 2.1);
+    bean.material = this.pbr('beanMat', '#5b2a4a', { roughness: 0.9 });
+    const beanTop = CreateSphere('beanbagTop', { diameter: 0.5, segments: 20 }, this.scene);
+    beanTop.scaling = new Vector3(1, 0.4, 1);
+    beanTop.position = new Vector3(2.75, 0.42, 2.05);
+    beanTop.material = this.pbr('beanTopMat', '#6d3357', { roughness: 0.9 });
+
+    const guitarBody = CreateCylinder('guitarBody', { height: 0.12, diameterTop: 0.5, diameterBottom: 0.44, tessellation: 32 }, this.scene);
+    guitarBody.rotation.z = Math.PI / 2;
+    guitarBody.rotation.y = 0.15;
+    guitarBody.position = new Vector3(-3.78, 0.85, 1.3);
+    guitarBody.material = this.pbr('guitarMat', '#c9362b', { roughness: 0.35, metallic: 0.2 });
+    const guitarNeck = this.box('guitarNeck', { w: 0.05, h: 1.1, d: 0.1 }, new Vector3(-3.82, 1.75, 1.3), this.pbr('guitarNeckMat', '#3a2418', { roughness: 0.6 }));
+    guitarNeck.rotation.z = 0.06;
+    const guitarHead = this.box('guitarHead', { w: 0.05, h: 0.22, d: 0.16 }, new Vector3(-3.79, 2.32, 1.3), this.pbr('guitarHeadMat', '#241009', { roughness: 0.5 }));
+    guitarHead.rotation.z = 0.06;
+    const guitarHole = CreateCylinder('guitarHole', { height: 0.14, diameter: 0.16, tessellation: 20 }, this.scene);
+    guitarHole.rotation.z = Math.PI / 2;
+    guitarHole.rotation.y = 0.15;
+    guitarHole.position = new Vector3(-3.74, 0.9, 1.3);
+    guitarHole.material = this.pbr('guitarHoleMat', '#0a0704', { roughness: 0.9 });
+
+    const wallShelf = this.box('wallShelf', { w: 0.16, h: 0.04, d: 0.8 }, new Vector3(3.96, 2.05, 1.1), woodDeco);
+    [
+      { z: 0.9, c: '#c96a3c' },
+      { z: 1.3, c: '#6a8f5a' },
+    ].forEach((p, i) => {
+      const pot = CreateCylinder('wallPot' + i, { height: 0.12, diameterTop: 0.12, diameterBottom: 0.09, tessellation: 16 }, this.scene);
+      pot.position = new Vector3(3.96, 2.13, p.z);
+      pot.material = this.pbr('wallPotMat' + i, p.c, { roughness: 0.8 });
+      const bush = CreateSphere('wallBush' + i, { diameter: 0.16, segments: 12 }, this.scene);
+      bush.scaling = new Vector3(1, 1.2, 1);
+      bush.position = new Vector3(3.96, 2.25, p.z);
+      bush.material = this.pbr('wallBushMat' + i, '#357d4a', { roughness: 0.9 });
+    });
+
+    const lavaBase = CreateCylinder('lavaBase', { height: 0.06, diameter: 0.16, tessellation: 20 }, this.scene);
+    lavaBase.position = new Vector3(3.5, 0.72, -2.35);
+    lavaBase.material = this.pbr('lavaBaseMat', '#26242f', { roughness: 0.4, metallic: 0.6 });
+    const lavaBody = CreateCylinder('lavaBody', { height: 0.24, diameterTop: 0.12, diameterBottom: 0.14, tessellation: 24 }, this.scene);
+    lavaBody.position = new Vector3(3.5, 0.86, -2.35);
+    lavaBody.material = this.emissive('lavaMat', hex('#ff5a8a'), 0.7);
+
+    const joystickBase = this.box('joyBase', { w: 0.3, h: 0.06, d: 0.22 }, new Vector3(3.5, 0.72, -0.9), this.pbr('joyBaseMat', '#1a1a26', { roughness: 0.5 }));
+    const joystickStick = CreateCylinder('joyStick', { height: 0.16, diameter: 0.03, tessellation: 10 }, this.scene);
+    joystickStick.position = new Vector3(3.44, 0.82, -0.9);
+    joystickStick.material = this.pbr('joyStickMat', '#26242f', { roughness: 0.3, metallic: 0.7 });
+    const joystickBall = CreateSphere('joyBall', { diameter: 0.07, segments: 14 }, this.scene);
+    joystickBall.position = new Vector3(3.44, 0.91, -0.9);
+    joystickBall.material = this.emissive('joyBallMat', NEON_PINK, 0.9);
+    void joystickBase;
+
+    const wallClock = CreateCylinder('wallClock', { height: 0.04, diameter: 0.3, tessellation: 28 }, this.scene);
+    wallClock.rotation.x = Math.PI / 2;
+    wallClock.position = new Vector3(-3.15, 2.15, -4.02);
+    wallClock.material = this.pbr('wallClockMat', '#161428', { roughness: 0.4, metallic: 0.4 });
+    const wallClockFace = CreateCylinder('wallClockFace', { height: 0.012, diameter: 0.26, tessellation: 28 }, this.scene);
+    wallClockFace.rotation.x = Math.PI / 2;
+    wallClockFace.position = new Vector3(-3.15, 2.15, -3.995);
+    wallClockFace.material = this.emissive('wallClockFaceMat', hex('#cfe0ff'), 0.45);
+
+    const fwLight = new PointLight('floorPlantLight', new Vector3(-3.5, 1.2, -3.55), this.scene);
+    fwLight.diffuse = hex('#57c98a');
+    fwLight.intensity = 1.6;
+    fwLight.range = 3.5;
   }
 
   private buildLights(): void {
@@ -1261,7 +1723,7 @@ export class RoomScene {
       if (mesh.name !== 'sky' && !mesh.name.startsWith('fairy')) {
         mesh.receiveShadows = true;
       }
-      if (['sky', 'ground', 'floor', 'ceiling'].includes(mesh.name) || mesh.name.startsWith('fairy')) {
+      if (['sky', 'ground', 'floor', 'ceiling', 'hallFloor', 'hallCeil'].includes(mesh.name) || mesh.name.startsWith('fairy')) {
         return;
       }
       if (mesh.getTotalVertices() > 0) {
@@ -1484,9 +1946,10 @@ export class RoomScene {
     this.phase = 'entering';
     this.vhsValue = 1;
     this.doorTween = 0;
+    this.elevatorOpening = true;
     this.callbacks.onEnter?.();
     this.callbacks.onPhase?.('entering');
-    this.startTransition(IDLE, 2.7);
+    this.startTransition(IDLE, 3.2);
     window.setTimeout(() => {
       if (this.disposed) {
         return;
@@ -1494,7 +1957,7 @@ export class RoomScene {
       this.vhsValue = 0.35;
       this.phase = 'idle';
       this.callbacks.onPhase?.('idle');
-    }, 2400);
+    }, 3100);
   }
 
   private startTransition(to: Pose, duration: number): void {

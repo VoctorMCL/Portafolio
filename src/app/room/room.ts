@@ -37,7 +37,7 @@ const VIEW_LABEL: Record<ViewId, string> = {
   shelf: 'Estantería',
 };
 
-const COMPACT_NAV_QUERY = '(pointer: coarse), (max-width: 1200px)';
+const COMPACT_NAV_QUERY = '(pointer: coarse), (any-hover: none), (max-width: 900px)';
 
 @Component({
   selector: 'app-room',
@@ -56,14 +56,14 @@ export class Room implements OnDestroy {
   protected readonly section = signal<PanelSection | null>(null);
   protected readonly phase = signal<ScenePhase>('intro');
   protected readonly disc = signal<DiscProject | null>(null);
-  protected readonly compactNav = signal(false);
+  protected readonly compactNav = signal(true);
   protected readonly viewIndex = signal(0);
   protected readonly viewLabel = computed(() => VIEW_LABEL[ROOM_VIEWS[this.viewIndex()]]);
 
   private mediaQuery?: MediaQueryList;
 
   private readonly onCompactChange = (event: MediaQueryListEvent): void => {
-    this.compactNav.set(event.matches);
+    this.compactNav.set(event.matches || window.innerWidth <= 900 || 'ontouchstart' in window);
   };
 
   private readonly onKeydown = (event: KeyboardEvent): void => {
@@ -97,7 +97,7 @@ export class Room implements OnDestroy {
 
     if (typeof window !== 'undefined') {
       this.mediaQuery = window.matchMedia(COMPACT_NAV_QUERY);
-      this.compactNav.set(this.mediaQuery.matches);
+      this.compactNav.set(this.mediaQuery.matches || window.innerWidth <= 900 || 'ontouchstart' in window);
       this.mediaQuery.addEventListener('change', this.onCompactChange);
     }
 
