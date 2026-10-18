@@ -1,7 +1,7 @@
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
-import { Matrix, Vector2, Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Vector2, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { Constants } from '@babylonjs/core/Engines/constants';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
@@ -18,9 +18,11 @@ import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator'
 import { GlowLayer } from '@babylonjs/core/Layers/glowLayer';
 import { PostProcess } from '@babylonjs/core/PostProcesses/postProcess';
 import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline';
+import { SSAO2RenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/ssao2RenderingPipeline';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
+import { VertexBuffer } from '@babylonjs/core/Meshes/buffer';
+import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
-import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder';
 import { CreateSphere } from '@babylonjs/core/Meshes/Builders/sphereBuilder';
 import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder';
 import { CreateTorus } from '@babylonjs/core/Meshes/Builders/torusBuilder';
@@ -34,6 +36,7 @@ import {
   discCanvas,
   discScreenCanvas,
   doormatCanvas,
+  heightToNormal,
   planksCanvas,
   posterCanvas,
   rugCanvas,
@@ -48,6 +51,7 @@ export type HotspotId = 'door' | 'shelf' | 'tv' | 'desk';
 export type InteriorId = Exclude<HotspotId, 'door'>;
 export type PanelId = Exclude<InteriorId, 'tv'>;
 export type ScenePhase = 'intro' | 'entering' | 'idle' | 'focus';
+export type ViewId = 'general' | 'tv' | 'desk' | 'shelf';
 export type HoverTargetId = HotspotId | 'disc';
 
 export interface HoverInfo {
@@ -57,20 +61,12 @@ export interface HoverInfo {
   y: number;
 }
 
-export interface ScreenRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 type PickTarget = { kind: 'hotspot'; id: HotspotId } | { kind: 'disc'; index: number };
 
 export interface RoomSceneCallbacks {
   onHover?: (info: HoverInfo | null) => void;
   onSelect?: (id: PanelId) => void;
   onDiscSelect?: (project: DiscProject) => void;
-  onScreenRect?: (rect: ScreenRect | null) => void;
   onEnter?: () => void;
   onPhase?: (phase: ScenePhase) => void;
 }
@@ -133,6 +129,152 @@ function hex(value: string): Color3 {
   return Color3.FromHexString(value);
 }
 
+type Point3 = [number, number, number];
+
+function chamferBox(name: string, w: number, h: number, d: number, scene: Scene): Mesh {
+  const hx = w / 2;
+  const hy = h / 2;
+  const hz = d / 2;
+  const c = Math.min(0.025, hx, hy, hz) * 0.35;
+  const ex = hx - c;
+  const ey = hy - c;
+  const ez = hz - c;
+  const extents: Point3 = [hx, hy, hz];
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  const sub = (a: Point3, b: Point3): Point3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const cross = (a: Point3, b: Point3): Point3 => [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+  const dot = (a: Point3, b: Point3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+  const addTri = (a: Point3, b0: Point3, c0: Point3, uvAxes: [number, number]): void => {
+    let b = b0;
+    let c = c0;
+    const centroid: Point3 = [
+      (a[0] + b0[0] + c0[0]) / 3,
+      (a[1] + b0[1] + c0[1]) / 3,
+      (a[2] + b0[2] + c0[2]) / 3,
+    ];
+    if (dot(cross(sub(b0, a), sub(c0, a)), centroid) < 0) {
+      b = c0;
+      c = b0;
+    }
+    const base = positions.length / 3;
+    for (const p of [a, b, c]) {
+      positions.push(p[0], p[1], p[2]);
+      uvs.push((p[uvAxes[0]] / extents[uvAxes[0]] + 1) / 2, (p[uvAxes[1]] / extents[uvAxes[1]] + 1) / 2);
+    }
+    indices.push(base, base + 1, base + 2);
+  };
+
+  const addQuad = (a: Point3, b: Point3, c: Point3, d: Point3, uvAxes: [number, number]): void => {
+    addTri(a, b, c, uvAxes);
+    addTri(a, c, d, uvAxes);
+  };
+
+  for (const sx of [-1, 1]) {
+    addQuad(
+      [sx * hx, ey, -ez],
+      [sx * hx, ey, ez],
+      [sx * hx, -ey, ez],
+      [sx * hx, -ey, -ez],
+      [1, 2],
+    );
+  }
+  for (const sy of [-1, 1]) {
+    addQuad(
+      [ex, sy * hy, -ez],
+      [ex, sy * hy, ez],
+      [-ex, sy * hy, ez],
+      [-ex, sy * hy, -ez],
+      [0, 2],
+    );
+  }
+  for (const sz of [-1, 1]) {
+    addQuad(
+      [-ex, ey, sz * hz],
+      [ex, ey, sz * hz],
+      [ex, -ey, sz * hz],
+      [-ex, -ey, sz * hz],
+      [0, 1],
+    );
+  }
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      addQuad(
+        [sx * hx, sy * ey, -ez],
+        [sx * hx, sy * ey, ez],
+        [sx * ex, sy * hy, ez],
+        [sx * ex, sy * hy, -ez],
+        [2, 0],
+      );
+    }
+  }
+  for (const sy of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      addQuad(
+        [-ex, sy * hy, sz * ez],
+        [ex, sy * hy, sz * ez],
+        [ex, sy * ey, sz * hz],
+        [-ex, sy * ey, sz * hz],
+        [0, 2],
+      );
+    }
+  }
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      addQuad(
+        [sx * hx, -ey, sz * ez],
+        [sx * hx, ey, sz * ez],
+        [sx * ex, ey, sz * hz],
+        [sx * ex, -ey, sz * hz],
+        [1, 2],
+      );
+    }
+  }
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        addTri([sx * hx, sy * ey, sz * ez], [sx * ex, sy * hy, sz * ez], [sx * ex, sy * ey, sz * hz], [0, 1]);
+      }
+    }
+  }
+
+  const mesh = new Mesh(name, scene);
+  const vd = new VertexData();
+  vd.positions = positions;
+  vd.indices = indices;
+  vd.uvs = uvs;
+  VertexData.ComputeNormals(positions, indices, (vd.normals = []));
+  vd.applyToMesh(mesh);
+  return mesh;
+}
+
+function jitterVertices(mesh: Mesh, amount: number): void {
+  const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+  if (!positions) {
+    return;
+  }
+  for (let i = 0; i < positions.length; i += 3) {
+    positions[i] += (Math.random() - 0.5) * amount;
+    positions[i + 1] += (Math.random() - 0.5) * amount;
+    positions[i + 2] += (Math.random() - 0.5) * amount;
+  }
+  mesh.setVerticesData(VertexBuffer.PositionKind, positions);
+  const indices = mesh.getIndices();
+  const normals = mesh.getVerticesData(VertexBuffer.NormalKind);
+  if (indices && normals) {
+    VertexData.ComputeNormals(positions, indices, normals);
+    mesh.setVerticesData(VertexBuffer.NormalKind, normals);
+  }
+  mesh.refreshBoundingInfo();
+}
+
 export class RoomScene {
   private readonly engine: Engine;
   private readonly scene: Scene;
@@ -160,6 +302,9 @@ export class RoomScene {
   private elapsed = 0;
   private texCounter = 0;
   private disposed = false;
+  private paused = false;
+  private pickPending: PointerEvent | null = null;
+  private pickScheduled = false;
 
   private discs: Mesh[] = [];
   private discHomes: Vector3[] = [];
@@ -167,16 +312,17 @@ export class RoomScene {
   private discTween?: { mesh: Mesh; from: Vector3; to: Vector3; elapsed: number; duration: number };
   private mediaOpen = false;
   private loadedDisc: number | null = null;
-  private screenEmitted = false;
   private tvScreenMat?: PBRMaterial;
-  private tvScreenMesh?: Mesh;
   private tvScreenTexture?: DynamicTexture;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly callbacks: RoomSceneCallbacks = {},
   ) {
-    this.engine = new Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true }, true);
+    this.engine = new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: false }, false);
+    const dpr = window.devicePixelRatio || 1;
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, coarse ? 1.5 : 2));
     this.scene = new Scene(this.engine);
     this.scene.clearColor = new Color4(0.02, 0.01, 0.05, 1);
     this.scene.fogMode = Scene.FOGMODE_EXP2;
@@ -184,7 +330,7 @@ export class RoomScene {
     this.scene.fogDensity = 0.014;
 
     this.camera = new FreeCamera('pov', INTRO.position.clone(), this.scene);
-    this.camera.fov = (52 * Math.PI) / 180;
+    this.camera.fov = RoomScene.BASE_FOV;
     this.camera.minZ = 0.08;
     this.camera.maxZ = 320;
     this.smoothPosition.copyFrom(INTRO.position);
@@ -192,21 +338,37 @@ export class RoomScene {
     this.camera.position.copyFrom(this.smoothPosition);
     this.camera.setTarget(this.smoothTarget);
 
-    this.glow = new GlowLayer('glow', this.scene, { blurKernelSize: 32 });
-    this.glow.intensity = 0.85;
+    this.glow = new GlowLayer('glow', this.scene, { blurKernelSize: 32, mainTextureRatio: 0.5 });
+    this.glow.intensity = 0.35;
 
     this.buildEnvironment();
     this.buildExterior();
     this.buildInterior();
     this.buildLights();
 
+    try {
+      if (SSAO2RenderingPipeline.IsSupported) {
+        const ssao = new SSAO2RenderingPipeline('ssao2', this.scene, { ssaoRatio: 0.5, blurRatio: 1 }, [this.camera]);
+        ssao.radius = 0.8;
+        ssao.totalStrength = 0.9;
+        ssao.maxZ = 25;
+        ssao.bilateralSoften = 0.5;
+      }
+    } catch (error) {
+      console.warn('SSAO no disponible:', error);
+    }
+
     this.pipeline = new DefaultRenderingPipeline('pipe', true, this.scene, [this.camera]);
     this.pipeline.fxaaEnabled = true;
-    this.pipeline.samples = 4;
+    this.pipeline.samples = 2;
     this.pipeline.bloomEnabled = true;
-    this.pipeline.bloomThreshold = 0.72;
-    this.pipeline.bloomWeight = 0.28;
-    this.pipeline.bloomKernel = 48;
+    this.pipeline.bloomThreshold = 0.8;
+    this.pipeline.bloomWeight = 0.05;
+    this.pipeline.bloomKernel = 12;
+    this.pipeline.bloomScale = 1.0;
+    this.pipeline.sharpenEnabled = true;
+    this.pipeline.sharpen.edgeAmount = 0.18;
+    this.pipeline.sharpen.colorAmount = 1;
     this.pipeline.imageProcessing.toneMappingEnabled = true;
     this.pipeline.imageProcessing.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
     this.pipeline.imageProcessing.contrast = 1.35;
@@ -229,11 +391,40 @@ export class RoomScene {
     this.vhs.onApply = (effect) => {
       effect.setFloat('uTime', this.elapsed);
       effect.setFloat('uVhs', this.vhsValue);
-      effect.setFloat('uVignette', 0.85);
+      effect.setFloat('uVignette', 0.25);
       effect.setVector2('uResolution', new Vector2(this.engine.getRenderWidth(), this.engine.getRenderHeight()));
     };
 
     this.attachEvents();
+    this.updateViewport();
+    this.engine.runRenderLoop(() => this.render());
+  }
+
+  private static readonly BASE_FOV = (52 * Math.PI) / 180;
+  private static readonly MAX_FOV = (78 * Math.PI) / 180;
+
+  private updateViewport(): void {
+    this.engine.resize();
+    const aspect = this.engine.getRenderWidth() / Math.max(1, this.engine.getRenderHeight());
+    this.camera.fov =
+      aspect >= 1
+        ? RoomScene.BASE_FOV
+        : Math.min(RoomScene.MAX_FOV, 2 * Math.atan(Math.tan(RoomScene.BASE_FOV / 2) / aspect));
+  }
+
+  pause(): void {
+    if (this.paused) {
+      return;
+    }
+    this.paused = true;
+    this.engine.stopRenderLoop();
+  }
+
+  resume(): void {
+    if (!this.paused) {
+      return;
+    }
+    this.paused = false;
     this.engine.runRenderLoop(() => this.render());
   }
 
@@ -256,6 +447,12 @@ export class RoomScene {
     this.phase = 'focus';
     this.goal = FOCUS[id];
     this.callbacks.onPhase?.('focus');
+  }
+
+  setView(view: ViewId): void {
+    this.resetMedia();
+    this.phase = 'idle';
+    this.goal = view === 'general' ? IDLE : FOCUS[view];
   }
 
   returnToIdle(): void {
@@ -286,10 +483,6 @@ export class RoomScene {
     if (this.mediaOpen) {
       this.startTransition(FOCUS.tv, 0.7);
     }
-    if (this.screenEmitted) {
-      this.screenEmitted = false;
-      this.callbacks.onScreenRect?.(null);
-    }
   }
 
   private openDiscRack(): void {
@@ -312,10 +505,6 @@ export class RoomScene {
     }
     this.mediaOpen = false;
     this.discTween = undefined;
-    if (this.screenEmitted) {
-      this.screenEmitted = false;
-      this.callbacks.onScreenRect?.(null);
-    }
   }
 
   private buildDiscMeshes(): void {
@@ -333,7 +522,7 @@ export class RoomScene {
       const home = this.discSlotPosition(index);
       const mesh = CreateCylinder(
         `disc-${index}`,
-        { height: 0.022, diameter: DISC_RADIUS * 2, tessellation: 32 },
+        { height: 0.022, diameter: DISC_RADIUS * 2, tessellation: 64 },
         this.scene,
       );
       mesh.rotation.z = Math.PI / 2;
@@ -344,9 +533,9 @@ export class RoomScene {
       mat.albedoColor = Color3.Black();
       mat.emissiveColor = Color3.White();
       mat.emissiveIntensity = 0.42;
-      mat.metallic = 0.72;
-      mat.roughness = 0.34;
-      mat.maxSimultaneousLights = 10;
+    mat.metallic = 0.72;
+    mat.roughness = 0.34;
+    mat.maxSimultaneousLights = 6;
       const tex = this.texture(discCanvas(project.title, project.accent));
       mat.albedoTexture = tex;
       mat.emissiveTexture = tex;
@@ -397,7 +586,7 @@ export class RoomScene {
     this.mediaOpen = true;
     this.clearHighlights();
     this.callbacks.onHover?.(null);
-    this.setScreen(discScreenCanvas(project.title, project.language ?? 'github', project.accent));
+    this.setScreen(discScreenCanvas(project));
     this.discTween = { mesh, from: mesh.position.clone(), to: DVD_SLOT.clone(), elapsed: 0, duration: 0.6 };
     this.startTransition(SCREEN_POSE, 0.9);
     this.callbacks.onDiscSelect?.(project);
@@ -412,34 +601,6 @@ export class RoomScene {
     this.tvScreenMat.emissiveTexture = this.tvScreenTexture;
   }
 
-  private emitScreenRect(): void {
-    if (this.loadedDisc === null || !this.tvScreenMesh || !this.callbacks.onScreenRect) {
-      return;
-    }
-    const cssWidth = this.canvas.clientWidth;
-    const cssHeight = this.canvas.clientHeight;
-    if (cssWidth === 0 || cssHeight === 0) {
-      return;
-    }
-    const box = this.tvScreenMesh.getBoundingInfo().boundingBox;
-    const viewport = this.camera.viewport.toGlobal(cssWidth, cssHeight);
-    const transform = this.scene.getTransformMatrix();
-    const identity = Matrix.Identity();
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const corner of box.vectorsWorld) {
-      const projected = Vector3.Project(corner, identity, transform, viewport);
-      minX = Math.min(minX, projected.x);
-      minY = Math.min(minY, projected.y);
-      maxX = Math.max(maxX, projected.x);
-      maxY = Math.max(maxY, projected.y);
-    }
-    this.screenEmitted = true;
-    this.callbacks.onScreenRect?.({ x: minX, y: minY, width: maxX - minX, height: maxY - minY });
-  }
-
   dispose(): void {
     this.disposed = true;
     this.detachEvents();
@@ -447,7 +608,6 @@ export class RoomScene {
     this.scene.dispose();
     this.engine.dispose();
   }
-
   private render(): void {
     if (this.disposed) {
       return;
@@ -460,7 +620,6 @@ export class RoomScene {
     this.updateCamera(dt);
 
     this.scene.render();
-    this.emitScreenRect();
   }
 
   private updateCamera(dt: number): void {
@@ -499,7 +658,7 @@ export class RoomScene {
     this.doorPivot.rotation.y = easeInOutCubic(this.doorTween) * target;
   }
 
-  private texture(canvas: HTMLCanvasElement, uScale = 1, vScale = 1): DynamicTexture {
+  private texture(canvas: HTMLCanvasElement, uScale = 1, vScale = 1, linear = false): DynamicTexture {
     const dt = new DynamicTexture(`tex-${this.texCounter++}`, { width: canvas.width, height: canvas.height }, this.scene, true);
     dt.getContext().drawImage(canvas, 0, 0);
     dt.update();
@@ -507,7 +666,15 @@ export class RoomScene {
     dt.vScale = vScale;
     dt.wrapU = Texture.WRAP_ADDRESSMODE;
     dt.wrapV = Texture.WRAP_ADDRESSMODE;
+    dt.anisotropicFilteringLevel = 16;
+    if (linear) {
+      dt.gammaSpace = false;
+    }
     return dt;
+  }
+
+  private bump(mat: PBRMaterial, source: HTMLCanvasElement, uScale = 1, vScale = 1, strength = 2): void {
+    mat.bumpTexture = this.texture(heightToNormal(source, strength), uScale, vScale, true);
   }
 
   private pbr(
@@ -519,7 +686,7 @@ export class RoomScene {
     mat.albedoColor = hex(color);
     mat.metallic = opts.metallic ?? 0.05;
     mat.roughness = opts.roughness ?? 0.78;
-    mat.maxSimultaneousLights = 10;
+    mat.maxSimultaneousLights = 6;
     if (opts.emissive) {
       mat.emissiveColor = opts.emissive;
       mat.emissiveIntensity = opts.emissiveIntensity ?? 1;
@@ -534,12 +701,12 @@ export class RoomScene {
     mat.emissiveIntensity = intensity;
     mat.metallic = 0;
     mat.roughness = 1;
-    mat.maxSimultaneousLights = 10;
+    mat.maxSimultaneousLights = 6;
     return mat;
   }
 
   private box(name: string, size: { w: number; h: number; d: number }, pos: Vector3, mat: PBRMaterial): Mesh {
-    const mesh = CreateBox(name, { width: size.w, height: size.h, depth: size.d }, this.scene);
+    const mesh = chamferBox(name, size.w, size.h, size.d, this.scene);
     mesh.position.copyFrom(pos);
     mesh.material = mat;
     return mesh;
@@ -621,8 +788,10 @@ export class RoomScene {
   }
 
   private buildExterior(): void {
+    const sidingSrc = sidingCanvas();
     const siding = this.pbr('siding', '#ffffff', { roughness: 0.85 });
-    siding.albedoTexture = this.texture(sidingCanvas(), 3, 2);
+    siding.albedoTexture = this.texture(sidingSrc, 3, 2);
+    this.bump(siding, sidingSrc, 3, 2, 2.5);
 
     const trim = this.pbr('trim', '#15141f', { roughness: 0.6 });
     const roofMat = this.pbr('roof', '#0f0d18', { roughness: 0.7, metallic: 0.15 });
@@ -688,7 +857,8 @@ export class RoomScene {
 
     const bushMat = this.pbr('bush', '#10241a', { roughness: 1 });
     for (let i = 0; i < 6; i++) {
-      const bush = CreateSphere('bush' + i, { diameter: 0.9 + Math.random() * 0.6, segments: 12 }, this.scene);
+      const bush = CreateSphere('bush' + i, { diameter: 0.9 + Math.random() * 0.6, segments: 24 }, this.scene);
+      jitterVertices(bush, 0.12);
       bush.position = new Vector3(-3.6 + i * 1.45, 0.35, 4.7 + (i % 2) * 0.35);
       bush.scaling.y = 0.7;
       bush.material = bushMat;
@@ -698,7 +868,8 @@ export class RoomScene {
     this.box('trunk', { w: 0.4, h: 3, d: 0.4 }, new Vector3(-6.5, 1.5, 6), trunk);
     const leafMat = this.pbr('leaf', '#0f2418', { roughness: 1 });
     for (let i = 0; i < 4; i++) {
-      const leaf = CreateSphere('leaf' + i, { diameter: 2.2 - i * 0.35, segments: 12 }, this.scene);
+      const leaf = CreateSphere('leaf' + i, { diameter: 2.2 - i * 0.35, segments: 24 }, this.scene);
+      jitterVertices(leaf, 0.22);
       leaf.position = new Vector3(-6.5, 3.2 + i * 0.6, 6);
       leaf.material = leafMat;
     }
@@ -708,27 +879,27 @@ export class RoomScene {
     const lampHead = CreateSphere('lampHead', { diameter: 0.5, segments: 16 }, this.scene);
     lampHead.position = new Vector3(5.6, 4.4, 5.6);
     lampHead.material = this.emissive('lampHeadMat', hex('#a9c8ff'), 1.4);
-    const street = new PointLight('street', new Vector3(5.6, 4.4, 5.6), this.scene);
-    street.diffuse = hex('#a9c8ff');
-    street.intensity = 18;
-    street.range = 16;
 
     const skyMat = new StandardMaterial('skyMat', this.scene);
     skyMat.disableLighting = true;
     skyMat.emissiveTexture = this.texture(skyCanvas());
     skyMat.backFaceCulling = false;
     skyMat.fogEnabled = false;
-    const sky = CreateSphere('sky', { diameter: 300, segments: 24, sideOrientation: Mesh.BACKSIDE }, this.scene);
+    const sky = CreateSphere('sky', { diameter: 300, segments: 12, sideOrientation: Mesh.BACKSIDE }, this.scene);
     sky.material = skyMat;
     this.glow.addExcludedMesh(sky);
   }
 
   private buildInterior(): void {
+    const wallSrc = wallCanvas();
     const wallMat = this.pbr('wall', '#ffffff', { roughness: 0.95 });
-    wallMat.albedoTexture = this.texture(wallCanvas(), 3, 1.5);
+    wallMat.albedoTexture = this.texture(wallSrc, 3, 1.5);
+    this.bump(wallMat, wallSrc, 3, 1.5, 1.5);
 
-    const floorMat = this.pbr('floor', '#ffffff', { roughness: 0.7 });
-    floorMat.albedoTexture = this.texture(planksCanvas(), 2, 2);
+    const floorSrc = planksCanvas();
+    const floorMat = this.pbr('floor', '#ffffff', { roughness: 0.55 });
+    floorMat.albedoTexture = this.texture(floorSrc, 2, 2);
+    this.bump(floorMat, floorSrc, 2, 2, 3);
 
     const floor = CreateGround('floor', { width: 8.2, height: 8, subdivisions: 2 }, this.scene);
     floor.material = floorMat;
@@ -759,8 +930,10 @@ export class RoomScene {
   }
 
   private buildDesk(): void {
-    const wood = this.pbr('deskWood', '#ffffff', { roughness: 0.5 });
-    wood.albedoTexture = this.texture(woodCanvas(), 1.5, 1);
+    const deskSrc = woodCanvas();
+    const wood = this.pbr('deskWood', '#ffffff', { roughness: 0.45 });
+    wood.albedoTexture = this.texture(deskSrc, 1.5, 1);
+    this.bump(wood, deskSrc, 1.5, 1, 3.5);
     const metal = this.pbr('deskMetal', '#26242f', { roughness: 0.35, metallic: 0.75 });
     const deskPos = new Vector3(0, 0.74, -3.1);
 
@@ -789,7 +962,10 @@ export class RoomScene {
     screenMat.emissiveIntensity = 1.5;
     screenMat.metallic = 0;
     screenMat.roughness = 1;
-    screenMat.maxSimultaneousLights = 10;
+    screenMat.maxSimultaneousLights = 6;
+    screenMat.clearCoat.isEnabled = true;
+    screenMat.clearCoat.intensity = 0.8;
+    screenMat.clearCoat.roughness = 0.12;
 
     const bezel = this.pbr('bezel', '#0a0a12', { roughness: 0.4, metallic: 0.3 });
     this.box('monitor', { w: 1.7, h: 1.0, d: 0.06 }, new Vector3(0, 1.42, -3.42), bezel);
@@ -843,6 +1019,20 @@ export class RoomScene {
       note.rotation.y = 0.2;
     });
 
+    const papers = this.slab('papers', 0.34, 0.24, 0.012, 0.012, new Vector3(0.72, 0.781, -2.95), this.pbr('papersMat', '#e8e4d8', { roughness: 0.92 }));
+    papers.rotation.y = 0.35;
+    const papers2 = this.slab('papers2', 0.3, 0.22, 0.01, 0.01, new Vector3(0.7, 0.791, -2.97), this.pbr('papers2Mat', '#d9d3c3', { roughness: 0.92 }));
+    papers2.rotation.y = 0.12;
+
+    const penColors = ['#2b6fff', '#ff5c8a'];
+    [-0.03, 0.02].forEach((dx, i) => {
+      const pen = CreateCylinder('pen' + i, { height: 0.22, diameter: 0.014, tessellation: 10 }, this.scene);
+      pen.position = new Vector3(-0.75 + dx, 0.95, -3.15 + (i ? 0.025 : -0.02));
+      pen.rotation.z = 0.3 - i * 0.6;
+      pen.rotation.x = i ? -0.25 : 0.2;
+      pen.material = this.pbr('penMat' + i, penColors[i], { roughness: 0.35 });
+    });
+
     const deskHotspot: Mesh[] = [top, monitorBase, monitorStand];
     deskHotspot.forEach((m) => {
       m.metadata = { hotspotId: 'desk' as HotspotId };
@@ -852,8 +1042,10 @@ export class RoomScene {
   }
 
   private buildShelf(): void {
-    const wood = this.pbr('shelfWood', '#ffffff', { roughness: 0.55 });
-    wood.albedoTexture = this.texture(woodCanvas(), 1, 1);
+    const shelfSrc = woodCanvas();
+    const wood = this.pbr('shelfWood', '#ffffff', { roughness: 0.5 });
+    wood.albedoTexture = this.texture(shelfSrc, 1, 1);
+    this.bump(wood, shelfSrc, 1, 1, 3.5);
     const x = -3.9;
     const shelf = new TransformNode('shelf', this.scene);
     const pickables: Mesh[] = [];
@@ -868,6 +1060,7 @@ export class RoomScene {
     this.box('shelfBack', { w: 0.08, h: 2.5, d: 2.3 }, new Vector3(x - 0.2, 1.35, -1.4), this.pbr('shelfBackMat', '#241a30', { roughness: 0.8 })).parent = shelf;
 
     const bookColors = ['#e63946', '#457b9d', '#2a9d8f', '#f4a261', '#9b5de5', '#ff006e', '#3a86ff'];
+    const bookMats = bookColors.map((c, i) => this.pbr('bookMat' + i, c, { roughness: 0.85 }));
     for (let shelfIdx = 0; shelfIdx < 4; shelfIdx++) {
       let offset = -0.85;
       while (offset < 0.85) {
@@ -878,8 +1071,9 @@ export class RoomScene {
           `book-${shelfIdx}-${offset.toFixed(2)}`,
           { w: 0.42, h, d: w },
           new Vector3(x, [0.4, 1.05, 1.7, 2.35][shelfIdx] + h / 2 + 0.03, -1.4 + offset + w / 2),
-          this.pbr('book' + shelfIdx + offset.toFixed(2), bookColors[colorIndex], { roughness: 0.85 }),
+          bookMats[colorIndex],
         );
+        book.rotation.x = (Math.random() - 0.5) * 0.14;
         pickables.push(book);
         offset += w + 0.02;
       }
@@ -896,8 +1090,9 @@ export class RoomScene {
     plantPot.position = new Vector3(x, 2.5, -2.2);
     plantPot.material = this.pbr('potMat', '#8a5a44', { roughness: 0.9 });
     for (let i = 0; i < 5; i++) {
-      const leaf = CreateSphere('sLeaf' + i, { diameter: 0.12 + Math.random() * 0.1, segments: 8 }, this.scene);
+      const leaf = CreateSphere('sLeaf' + i, { diameter: 0.12 + Math.random() * 0.1, segments: 16 }, this.scene);
       leaf.position = new Vector3(x, 2.66 + i * 0.07, -2.2 + (Math.random() - 0.5) * 0.2);
+      leaf.rotation.z = (Math.random() - 0.5) * 0.6;
       leaf.scaling.y = 1.6;
       leaf.material = this.pbr('sLeafMat' + i, '#2f7d4f', { roughness: 1 });
     }
@@ -914,8 +1109,10 @@ export class RoomScene {
     const tvZ = -1.7;
     const dvdZ = -0.75;
 
+    const cabinetSrc = woodCanvas();
     const cabinetMat = this.pbr('mediaCabinet', '#ffffff', { roughness: 0.5 });
-    cabinetMat.albedoTexture = this.texture(woodCanvas(), 1.5, 1);
+    cabinetMat.albedoTexture = this.texture(cabinetSrc, 1.5, 1);
+    this.bump(cabinetMat, cabinetSrc, 1.5, 1, 3.5);
     const metal = this.pbr('tvMetal', '#26242f', { roughness: 0.3, metallic: 0.7 });
     const plastic = this.pbr('tvPlastic', '#2a2320', { roughness: 0.55, metallic: 0.05 });
     const rackMat = this.pbr('discRack', '#1a1424', { roughness: 0.6, metallic: 0.2 });
@@ -934,10 +1131,12 @@ export class RoomScene {
     screenMat.emissiveIntensity = 1.25;
     screenMat.metallic = 0;
     screenMat.roughness = 1;
-    screenMat.maxSimultaneousLights = 10;
+    screenMat.maxSimultaneousLights = 6;
+    screenMat.clearCoat.isEnabled = true;
+    screenMat.clearCoat.intensity = 1;
+    screenMat.clearCoat.roughness = 0.1;
     this.tvScreenMat = screenMat;
     const screenMesh = this.box('tvScreen', { w: 0.02, h: 0.5, d: 0.66 }, new Vector3(3.43, 1.03, tvZ), screenMat);
-    this.tvScreenMesh = screenMesh;
     this.setScreen(null);
 
     tvPickables.push(tvBody, tvBezel, screenMesh);
@@ -953,6 +1152,15 @@ export class RoomScene {
     this.box('dvdBody', { w: 0.5, h: 0.1, d: 0.7 }, new Vector3(x, 0.76, dvdZ), metal);
     this.box('dvdSlot', { w: 0.02, h: 0.02, d: 0.5 }, new Vector3(3.44, 0.78, dvdZ), this.pbr('dvdSlotMat', '#05060a', { roughness: 1 }));
     this.box('dvdLed', { w: 0.01, h: 0.05, d: 0.12 }, new Vector3(3.44, 0.76, dvdZ + 0.24), this.emissive('dvdLedMat', NEON_CYAN, 1.2));
+
+    const speakerMat = this.pbr('speakerMat', '#17141f', { roughness: 0.6 });
+    [-2.35, -1.15].forEach((z, i) => {
+      this.box('speaker' + i, { w: 0.18, h: 0.36, d: 0.1 }, new Vector3(3.7, 0.88, z), speakerMat);
+      const ring = CreateTorus('spkRing' + i, { diameter: 0.09, thickness: 0.012, tessellation: 24 }, this.scene);
+      ring.rotation.z = Math.PI / 2;
+      ring.position = new Vector3(3.6, 0.88, z);
+      ring.material = metal;
+    });
 
     const rackZ = -1.5;
     this.box('discRack', { w: 0.06, h: 1.2, d: 2.4 }, new Vector3(4.12, 2.0, rackZ), rackMat);
@@ -999,15 +1207,13 @@ export class RoomScene {
     neonLight.intensity = 6;
     neonLight.range = 8;
 
-    const fairy = new PointLight('fairy', new Vector3(-3.4, 2.3, 0.6), this.scene);
-    fairy.diffuse = hex('#ffd6a0');
-    fairy.intensity = 4;
-    fairy.range = 6;
+    const fairyWarm = this.emissive('fairyWarmMat', hex('#ffd6a0'), 1.5);
+    const fairyCool = this.emissive('fairyCoolMat', NEON_CYAN, 1.5);
     for (let i = 0; i < 14; i++) {
       const t = i / 13;
-      const bulb = CreateSphere('fairyBulb' + i, { diameter: 0.05, segments: 8 }, this.scene);
+      const bulb = CreateSphere('fairyBulb' + i, { diameter: 0.05, segments: 6 }, this.scene);
       bulb.position = new Vector3(-3.9, 2.45 - Math.sin(t * Math.PI) * 0.35, -2.2 + t * 5.4);
-      bulb.material = this.emissive('fairyMat' + (i % 2), i % 2 ? NEON_CYAN : hex('#ffd6a0'), 1.5);
+      bulb.material = i % 2 ? fairyCool : fairyWarm;
     }
 
     const chairSeat = this.slab('chairSeat', 0.6, 0.6, 0.12, 0.1, new Vector3(0, 0.48, -2.2), this.pbr('chairMat', '#140f1f', { roughness: 0.5 }));
@@ -1018,7 +1224,7 @@ export class RoomScene {
     chairPole.material = this.pbr('chairMetal', '#26242f', { roughness: 0.4, metallic: 0.7 });
     for (let i = 0; i < 5; i++) {
       const a = (i / 5) * Math.PI * 2;
-      const arm = CreateBox('chairArm' + i, { width: 0.4, height: 0.03, depth: 0.05 }, this.scene);
+      const arm = chamferBox('chairArm' + i, 0.4, 0.03, 0.05, this.scene);
       arm.position = new Vector3(Math.cos(a) * 0.2, 0.06, -2.2 + Math.sin(a) * 0.2);
       arm.rotation.y = -a;
       arm.material = chairPole.material;
@@ -1030,7 +1236,7 @@ export class RoomScene {
 
   private buildLights(): void {
     const hemi = new HemisphericLight('hemi', new Vector3(0, 1, 0), this.scene);
-    hemi.intensity = 0.32;
+    hemi.intensity = 0.3;
     hemi.diffuse = hex('#8899ff');
     hemi.groundColor = hex('#2a1240');
 
@@ -1039,10 +1245,17 @@ export class RoomScene {
     moon.intensity = 0.85;
     moon.diffuse = hex('#bcd0ff');
 
+    const fill = new DirectionalLight('fill', new Vector3(0.4, -0.65, -0.65), this.scene);
+    fill.intensity = 0.3;
+    fill.diffuse = hex('#9db4ff');
+
     const shadow = new ShadowGenerator(2048, moon);
     shadow.useBlurExponentialShadowMap = true;
     shadow.blurKernel = 24;
-    shadow.darkness = 0.55;
+    shadow.darkness = 0.5;
+    if (shadow.getShadowMap()) {
+      shadow.getShadowMap()!.refreshRate = 6;
+    }
 
     this.scene.meshes.forEach((mesh) => {
       if (mesh.name !== 'sky' && !mesh.name.startsWith('fairy')) {
@@ -1070,16 +1283,42 @@ export class RoomScene {
     this.canvas.addEventListener('pointermove', this.onPointerMove);
     this.canvas.addEventListener('pointerleave', this.onPointerLeave);
     this.canvas.addEventListener('pointerup', this.onPointerUp);
+    document.addEventListener('visibilitychange', this.onVisibility);
+    window.addEventListener('resize', this.onResize);
   }
 
   private detachEvents(): void {
     this.canvas.removeEventListener('pointermove', this.onPointerMove);
     this.canvas.removeEventListener('pointerleave', this.onPointerLeave);
     this.canvas.removeEventListener('pointerup', this.onPointerUp);
+    document.removeEventListener('visibilitychange', this.onVisibility);
+    window.removeEventListener('resize', this.onResize);
   }
 
+  private readonly onResize = (): void => this.updateViewport();
+
+  private readonly onVisibility = (): void => {
+    if (document.hidden) {
+      this.pause();
+    } else {
+      this.resume();
+    }
+  };
+
   private readonly onPointerMove = (event: PointerEvent): void => {
-    this.updateHover(this.pickAt(event), event);
+    this.pickPending = event;
+    if (this.pickScheduled) {
+      return;
+    }
+    this.pickScheduled = true;
+    requestAnimationFrame(() => {
+      this.pickScheduled = false;
+      const pending = this.pickPending;
+      this.pickPending = null;
+      if (pending) {
+        this.updateHover(this.pickAt(pending), pending);
+      }
+    });
   };
 
   private readonly onPointerLeave = (): void => {

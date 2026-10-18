@@ -12,8 +12,10 @@
     }
   }
 
-  @if (!hover() && !section() && !loading() && !disc()) {
-    @if (phase() === 'intro') {
+  @if (!hover() && !section() && !loading()) {
+    @if (disc()) {
+      <p class="hint">Pulsa Esc para expulsar el disco</p>
+    } @else if (phase() === 'intro') {
       <p class="hint">Haz clic en la puerta para entrar</p>
     } @else if (phase() === 'idle') {
       <p class="hint">Haz clic en los objetos para explorar</p>
@@ -22,32 +24,16 @@
     }
   }
 
-  @if (disc(); as project) {
-    <article class="disc-overlay" [style]="overlayStyle()">
-      <button class="disc-overlay__close" type="button" (click)="closeDisc()" aria-label="Expulsar disco">
-        <span aria-hidden="true">×</span>
+  @if (compactNav() && !section() && !loading() && !disc() && phase() !== 'intro' && phase() !== 'entering') {
+    <div class="view-nav" role="group" aria-label="Cambiar de vista">
+      <button type="button" class="view-nav__btn" (click)="stepView(-1)" aria-label="Vista anterior">
+        &#8249;
       </button>
-      <p class="disc-overlay__eyebrow">► Reproduciendo · {{ project.year }}</p>
-      <h2 class="disc-overlay__title">{{ project.title }}</h2>
-      <p class="disc-overlay__text">{{ project.summary }}</p>
-      @if (project.tech.length) {
-        <ul class="disc-overlay__tags">
-          @for (tech of project.tech; track tech) {
-            <li>{{ tech }}</li>
-          }
-        </ul>
-      }
-      <div class="disc-overlay__actions">
-        <a class="disc-overlay__btn" [href]="project.repoUrl" target="_blank" rel="noopener">
-          Ver en GitHub
-        </a>
-        @if (project.demoUrl) {
-          <a class="disc-overlay__btn disc-overlay__btn--ghost" [href]="project.demoUrl" target="_blank" rel="noopener">
-            Demo
-          </a>
-        }
-      </div>
-    </article>
+      <span class="view-nav__label" aria-live="polite">{{ viewLabel() }}</span>
+      <button type="button" class="view-nav__btn" (click)="stepView(1)" aria-label="Vista siguiente">
+        &#8250;
+      </button>
+    </div>
   }
 
   <app-info-panel [section]="section()" (close)="closeSection()" />

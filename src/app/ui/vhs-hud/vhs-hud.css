@@ -188,3 +188,35 @@
     animation: none;
   }
 }
+
+@media (max-width: 640px) {
+  .hud__corner {
+    gap: 0.4rem;
+    padding: calc(0.85rem + env(safe-area-inset-top, 0px)) 0.85rem;
+  }
+
+  .hud__corner--bl,
+  .hud__corner--br {
+    padding-bottom: calc(0.85rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .frame--tl,
+  .frame--tr {
+    top: 0.45rem;
+  }
+
+  .frame--bl,
+  .frame--br {
+    bottom: 0.45rem;
+  }
+
+  .frame--tl,
+  .frame--bl {
+    left: 0.45rem;
+  }
+
+  .frame--tr,
+  .frame--br {
+    right: 0.45rem;
+  }
+}

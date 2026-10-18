@@ -11,7 +11,7 @@ import {
 import { LoadingService } from './loading.service';
 import { Room } from './room/room';
 
-const NOISE_SCALE = 4;
+const NOISE_SCALE = 8;
 
 @Component({
   imports: [Room],
@@ -27,6 +27,7 @@ export class App implements OnDestroy {
   private readonly noiseRef = viewChild<ElementRef<HTMLCanvasElement>>('noise');
   private frameId = 0;
   private resizeHandler?: () => void;
+  private noiseImage?: ImageData;
 
   constructor() {
     afterNextRender(() => {
@@ -68,15 +69,19 @@ export class App implements OnDestroy {
     const resize = () => {
       canvas.width = Math.max(1, Math.floor(window.innerWidth / NOISE_SCALE));
       canvas.height = Math.max(1, Math.floor(window.innerHeight / NOISE_SCALE));
+      this.noiseImage = ctx.createImageData(canvas.width, canvas.height);
     };
     resize();
     this.resizeHandler = resize;
     window.addEventListener('resize', resize);
 
+    let frame = 0;
     const draw = () => {
-      const { width, height } = canvas;
-      const image = ctx.createImageData(width, height);
-      const data = image.data;
+      this.frameId = requestAnimationFrame(draw);
+      if (frame++ % 3 !== 0 || !this.noiseImage) {
+        return;
+      }
+      const data = this.noiseImage.data;
 
       for (let i = 0; i < data.length; i += 4) {
         const value = 40 + Math.random() * 215;
@@ -86,8 +91,7 @@ export class App implements OnDestroy {
         data[i + 3] = Math.random() * 175;
       }
 
-      ctx.putImageData(image, 0, 0);
-      this.frameId = requestAnimationFrame(draw);
+      ctx.putImageData(this.noiseImage, 0, 0);
     };
     draw();
   }

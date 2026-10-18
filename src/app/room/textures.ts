@@ -5,6 +5,42 @@ function surface(width: number, height: number) {
   return { canvas, ctx: canvas.getContext('2d')! };
 }
 
+export function heightToNormal(source: HTMLCanvasElement, strength = 2): HTMLCanvasElement {
+  const w = source.width;
+  const h = source.height;
+  const { canvas, ctx } = surface(w, h);
+  const src = source.getContext('2d')!.getImageData(0, 0, w, h).data;
+  const out = ctx.createImageData(w, h);
+
+  const lum = (x: number, y: number): number => {
+    const xx = (x + w) % w;
+    const yy = (y + h) % h;
+    const i = (yy * w + xx) * 4;
+    return (src[i] * 299 + src[i + 1] * 587 + src[i + 2] * 114) / 255000;
+  };
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const dx = (lum(x + 1, y) - lum(x - 1, y)) * strength;
+      const dy = (lum(x, y + 1) - lum(x, y - 1)) * strength;
+      let nx = -dx;
+      let ny = dy;
+      let nz = 1;
+      const inv = 1 / Math.hypot(nx, ny, nz);
+      nx *= inv;
+      ny *= inv;
+      nz *= inv;
+      const i = (y * w + x) * 4;
+      out.data[i] = (nx * 0.5 + 0.5) * 255;
+      out.data[i + 1] = (ny * 0.5 + 0.5) * 255;
+      out.data[i + 2] = (nz * 0.5 + 0.5) * 255;
+      out.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+  return canvas;
+}
+
 export function woodCanvas(): HTMLCanvasElement {
   const { canvas, ctx } = surface(256, 256);
   ctx.fillStyle = '#41301f';
@@ -242,8 +278,17 @@ export function discCanvas(label: string, accent: string): HTMLCanvasElement {
   return canvas;
 }
 
-export function discScreenCanvas(title: string, language: string, accent: string): HTMLCanvasElement {
+export function discScreenCanvas(project: {
+  title: string;
+  summary: string;
+  year: string;
+  tech: string[];
+  language?: string;
+  repoUrl: string;
+  accent: string;
+}): HTMLCanvasElement {
   const { canvas, ctx } = surface(512, 384);
+  const accent = project.accent;
   ctx.fillStyle = '#03070e';
   ctx.fillRect(0, 0, 512, 384);
 
@@ -262,26 +307,53 @@ export function discScreenCanvas(title: string, language: string, accent: string
   ctx.lineWidth = 3;
   ctx.strokeRect(16, 16, 480, 352);
 
-  ctx.fillStyle = accent;
-  ctx.font = 'bold 20px monospace';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillText('► REPRODUCIENDO', 40, 66);
-
-  ctx.fillStyle = '#eaf5ff';
-  ctx.font = 'bold 46px monospace';
-  const lines = wrapLines(ctx, title, 430).slice(0, 2);
-  lines.forEach((line, i) => ctx.fillText(line, 40, 140 + i * 52));
-
-  ctx.fillStyle = '#8fb6d8';
-  ctx.font = '22px monospace';
-  ctx.fillText(language ? `lenguaje: ${language}` : 'repositorio de github', 40, 300);
 
   ctx.fillStyle = accent;
-  ctx.fillRect(40, 322, 200, 30);
-  ctx.fillStyle = '#04121c';
-  ctx.font = 'bold 20px monospace';
-  ctx.fillText('VER EN GITHUB', 56, 344);
+  ctx.font = 'bold 19px monospace';
+  ctx.fillText(`► REPRODUCIENDO · ${project.year}`, 40, 62);
+
+  let y = 108;
+  ctx.fillStyle = '#eaf5ff';
+  ctx.font = 'bold 38px monospace';
+  const titleLines = wrapLines(ctx, project.title.toUpperCase(), 432).slice(0, 2);
+  titleLines.forEach((line) => {
+    ctx.fillText(line, 40, y);
+    y += 44;
+  });
+
+  y += 6;
+  ctx.fillStyle = '#8fb6d8';
+  ctx.font = '18px monospace';
+  const summaryLines = wrapLines(ctx, project.summary, 432).slice(0, 3);
+  summaryLines.forEach((line) => {
+    ctx.fillText(line, 40, y);
+    y += 23;
+  });
+
+  y += 18;
+  ctx.font = '15px monospace';
+  let x = 40;
+  for (const tag of project.tech.slice(0, 5)) {
+    const w = ctx.measureText(tag).width + 20;
+    if (x + w > 472) {
+      break;
+    }
+    ctx.strokeStyle = `${accent}88`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(x, y - 16, w, 24, 12);
+    ctx.stroke();
+    ctx.fillStyle = '#cfe6ff';
+    ctx.fillText(tag, x + 10, y + 1);
+    x += w + 10;
+  }
+
+  ctx.fillStyle = '#5d86ad';
+  ctx.font = '14px monospace';
+  const url = project.repoUrl.replace(/^https?:\/\//, '');
+  ctx.fillText(url.length > 46 ? `${url.slice(0, 45)}…` : url, 40, 348);
 
   return canvas;
 }

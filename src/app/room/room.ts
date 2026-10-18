@@ -4,14 +4,16 @@ import {
   ElementRef,
   OnDestroy,
   afterNextRender,
+  computed,
+  effect,
   inject,
   signal,
   viewChild,
 } from '@angular/core';
 import { LoadingService } from '../loading.service';
 import { InfoPanel, PanelSection } from '../ui/info-panel/info-panel';
-import { DiscProject, fallbackProjects, fetchGitHubProjects } from '../data/github';
-import { HoverInfo, HotspotId, PanelId, RoomScene, ScenePhase, ScreenRect } from './room-scene';
+import { DiscProject, getProjects } from '../data/github';
+import { HoverInfo, HotspotId, PanelId, RoomScene, ScenePhase, ViewId } from './room-scene';
 import { VhsHud } from '../ui/vhs-hud/vhs-hud';
 
 const SECTION_BY_HOTSPOT: Record<PanelId, PanelSection> = {
@@ -25,6 +27,17 @@ const LABEL_BY_HOTSPOT: Record<HotspotId, string> = {
   tv: 'Proyectos',
   desk: 'Contacto',
 };
+
+const ROOM_VIEWS: ViewId[] = ['general', 'tv', 'desk', 'shelf'];
+
+const VIEW_LABEL: Record<ViewId, string> = {
+  general: 'Vista general',
+  tv: 'Consola',
+  desk: 'PC',
+  shelf: 'Estantería',
+};
+
+const COMPACT_NAV_QUERY = '(pointer: coarse), (max-width: 1200px)';
 
 @Component({
   selector: 'app-room',
@@ -43,7 +56,15 @@ export class Room implements OnDestroy {
   protected readonly section = signal<PanelSection | null>(null);
   protected readonly phase = signal<ScenePhase>('intro');
   protected readonly disc = signal<DiscProject | null>(null);
-  protected readonly screenRect = signal<ScreenRect | null>(null);
+  protected readonly compactNav = signal(false);
+  protected readonly viewIndex = signal(0);
+  protected readonly viewLabel = computed(() => VIEW_LABEL[ROOM_VIEWS[this.viewIndex()]]);
+
+  private mediaQuery?: MediaQueryList;
+
+  private readonly onCompactChange = (event: MediaQueryListEvent): void => {
+    this.compactNav.set(event.matches);
+  };
 
   private readonly onKeydown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') {
@@ -58,27 +79,40 @@ export class Room implements OnDestroy {
           onHover: (info) => this.hover.set(info),
           onSelect: (id) => this.openSection(id),
           onDiscSelect: (project) => this.disc.set(project),
-          onScreenRect: (rect) => this.screenRect.set(rect),
           onPhase: (phase) => this.phase.set(phase),
         });
         this.scene = scene;
-        scene.setProjects(fallbackProjects());
+        if (this.loadingService.visible()) {
+          scene.pause();
+        }
+        scene.setProjects(getProjects());
         scene.setPhase('intro');
         scene.start();
-        void this.loadProjects(scene);
       } catch (error) {
         console.error('No se pudo iniciar la escena 3D:', error);
       }
     });
 
     window.addEventListener('keydown', this.onKeydown);
-  }
 
-  private async loadProjects(scene: RoomScene): Promise<void> {
-    const projects = await fetchGitHubProjects();
-    if (this.scene === scene && projects.length > 0) {
-      scene.setProjects(projects);
+    if (typeof window !== 'undefined') {
+      this.mediaQuery = window.matchMedia(COMPACT_NAV_QUERY);
+      this.compactNav.set(this.mediaQuery.matches);
+      this.mediaQuery.addEventListener('change', this.onCompactChange);
     }
+
+    effect(() => {
+      const loading = this.loading();
+      const scene = this.scene;
+      if (!scene) {
+        return;
+      }
+      if (loading) {
+        scene.pause();
+      } else {
+        scene.resume();
+      }
+    });
   }
 
   protected label(info: HoverInfo): string {
@@ -88,28 +122,21 @@ export class Room implements OnDestroy {
     return LABEL_BY_HOTSPOT[info.id];
   }
 
-  protected overlayStyle(): Record<string, string> {
-    const rect = this.screenRect();
-    if (!rect) {
-      return { opacity: '0', 'pointer-events': 'none' };
-    }
-    const width = Math.min(Math.max(rect.width, 320), 680);
-    return {
-      left: `${rect.x + rect.width / 2}px`,
-      top: `${rect.y + rect.height / 2}px`,
-      width: `${width}px`,
-      opacity: '1',
-    };
-  }
-
   protected closeSection(): void {
     this.section.set(null);
+    this.viewIndex.set(0);
     this.scene?.returnToIdle();
+  }
+
+  protected stepView(delta: number): void {
+    const count = ROOM_VIEWS.length;
+    const next = (this.viewIndex() + delta + count) % count;
+    this.viewIndex.set(next);
+    this.scene?.setView(ROOM_VIEWS[next]);
   }
 
   protected closeDisc(): void {
     this.disc.set(null);
-    this.screenRect.set(null);
     this.scene?.ejectDisc();
   }
 
@@ -131,6 +158,7 @@ export class Room implements OnDestroy {
 
   ngOnDestroy(): void {
     window.removeEventListener('keydown', this.onKeydown);
+    this.mediaQuery?.removeEventListener('change', this.onCompactChange);
     this.scene?.dispose();
   }
 }
