@@ -90,7 +90,6 @@ export class Room implements OnDestroy {
           }
           scene.setProjects(getProjects());
           scene.setPhase('intro');
-          scene.start();
         } catch (error) {
           console.error('No se pudo iniciar la escena 3D:', error);
         }

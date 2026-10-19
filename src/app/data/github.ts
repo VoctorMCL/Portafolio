@@ -2,14 +2,11 @@ import { PROJECTS } from './portfolio';
 
 export interface DiscProject {
   id: string;
-  name: string;
   title: string;
   summary: string;
-  language?: string;
   tech: string[];
   repoUrl: string;
   demoUrl?: string;
-  stars: number;
   year: string;
   accent: string;
 }
@@ -32,14 +29,11 @@ const PALETTE = [
 export function getProjects(): DiscProject[] {
   return PROJECTS.map((project, index) => ({
     id: project.id,
-    name: project.id,
     title: project.title,
     summary: project.summary,
-    language: project.tech[0],
     tech: project.tech,
     repoUrl: project.repoUrl ?? `https://github.com/${GITHUB_USER}`,
     demoUrl: project.demoUrl,
-    stars: 0,
     year: project.year,
     accent: PALETTE[index % PALETTE.length],
   }));

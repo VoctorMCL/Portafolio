@@ -13,14 +13,17 @@
   }
 
   @if (!hover() && !section() && !loading()) {
-    @if (disc()) {
-      <p class="hint">Pulsa Esc para expulsar el disco</p>
+    @if (disc(); as project) {
+      <div class="disc-bar">
+        <span class="disc-bar__label">{{ project.title }}</span>
+        <button type="button" class="disc-bar__btn" (click)="closeDisc()">Expulsar disco</button>
+      </div>
     } @else if (phase() === 'intro') {
-      <p class="hint">Haz clic en las puertas del ascensor para entrar</p>
+      <p class="hint">{{ compactNav() ? 'Toca las puertas del ascensor para entrar' : 'Haz clic en las puertas del ascensor para entrar' }}</p>
     } @else if (phase() === 'idle') {
-      <p class="hint">Haz clic en los objetos para explorar</p>
+      <p class="hint">{{ compactNav() ? 'Toca un objeto o cambia de vista' : 'Haz clic en los objetos para explorar' }}</p>
     } @else if (phase() === 'focus') {
-      <p class="hint">Elige un disco · pulsa Esc para salir</p>
+      <p class="hint">{{ compactNav() ? 'Elige un disco' : 'Elige un disco · pulsa Esc para salir' }}</p>
     }
   }
 

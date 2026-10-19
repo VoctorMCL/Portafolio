@@ -20,7 +20,6 @@ import { PostProcess } from '@babylonjs/core/PostProcesses/postProcess';
 import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline';
 import { SSAO2RenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/ssao2RenderingPipeline';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
-import { VertexBuffer } from '@babylonjs/core/Meshes/buffer';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { CreateSphere } from '@babylonjs/core/Meshes/Builders/sphereBuilder';
@@ -30,7 +29,6 @@ import { CreateGround } from '@babylonjs/core/Meshes/Builders/groundBuilder';
 import { ExtrudeShape } from '@babylonjs/core/Meshes/Builders/shapeBuilder';
 import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder';
 import '@babylonjs/core/Culling/ray';
-import '@babylonjs/core/Rendering/outlineRenderer';
 import { VHS_SHADER_NAME } from './vhs-post';
 import type { DiscProject } from '../data/github';
 import {
@@ -71,7 +69,6 @@ export interface RoomSceneCallbacks {
   onHover?: (info: HoverInfo | null) => void;
   onSelect?: (id: PanelId) => void;
   onDiscSelect?: (project: DiscProject) => void;
-  onEnter?: () => void;
   onPhase?: (phase: ScenePhase) => void;
 }
 
@@ -259,26 +256,6 @@ function chamferBox(name: string, w: number, h: number, d: number, scene: Scene)
   return mesh;
 }
 
-function jitterVertices(mesh: Mesh, amount: number): void {
-  const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
-  if (!positions) {
-    return;
-  }
-  for (let i = 0; i < positions.length; i += 3) {
-    positions[i] += (Math.random() - 0.5) * amount;
-    positions[i + 1] += (Math.random() - 0.5) * amount;
-    positions[i + 2] += (Math.random() - 0.5) * amount;
-  }
-  mesh.setVerticesData(VertexBuffer.PositionKind, positions);
-  const indices = mesh.getIndices();
-  const normals = mesh.getVerticesData(VertexBuffer.NormalKind);
-  if (indices && normals) {
-    VertexData.ComputeNormals(positions, indices, normals);
-    mesh.setVerticesData(VertexBuffer.NormalKind, normals);
-  }
-  mesh.refreshBoundingInfo();
-}
-
 export class RoomScene {
   private readonly engine: Engine;
   private readonly scene: Scene;
@@ -286,7 +263,6 @@ export class RoomScene {
 
   private readonly doorPickable: Mesh[] = [];
   private readonly interiorPickable = new Map<InteriorId, Mesh[]>();
-  private readonly anchors = new Map<HotspotId, Vector3>();
 
   private readonly smoothPosition = new Vector3();
   private readonly smoothTarget = new Vector3();
@@ -318,6 +294,10 @@ export class RoomScene {
   private paused = false;
   private pickPending: PointerEvent | null = null;
   private pickScheduled = false;
+  private tapStart: { x: number; y: number } | null = null;
+  private viewScale = 1;
+  private readonly viewOffset = new Vector3();
+  private readonly coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
 
   private discs: Mesh[] = [];
   private discHomes: Vector3[] = [];
@@ -335,8 +315,7 @@ export class RoomScene {
   ) {
     this.engine = new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: false }, false);
     const dpr = window.devicePixelRatio || 1;
-    const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
-    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, coarse ? 1.5 : 2));
+    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 1.5 : 2));
     this.scene = new Scene(this.engine);
     this.scene.clearColor = new Color4(0.02, 0.01, 0.05, 1);
     this.scene.fogMode = Scene.FOGMODE_EXP2;
@@ -433,6 +412,12 @@ export class RoomScene {
       aspect >= 1
         ? RoomScene.BASE_FOV
         : Math.min(RoomScene.MAX_FOV, 2 * Math.atan(Math.tan(RoomScene.BASE_FOV / 2) / aspect));
+
+    const width = window.innerWidth || this.engine.getRenderWidth();
+    const height = Math.max(1, window.innerHeight || this.engine.getRenderHeight());
+    const cssAspect = width / height;
+    this.viewScale =
+      cssAspect >= 1.1 ? 1 : Math.min(1.34, 1 + (1.1 - cssAspect) * (cssAspect < 0.75 ? 0.62 : 0.4));
   }
 
   pause(): void {
@@ -449,10 +434,6 @@ export class RoomScene {
     }
     this.paused = false;
     this.engine.runRenderLoop(() => this.render());
-  }
-
-  start(): void {
-    /* render loop already running */
   }
 
   setPhase(phase: ScenePhase): void {
@@ -563,9 +544,9 @@ export class RoomScene {
       mat.albedoColor = Color3.Black();
       mat.emissiveColor = Color3.White();
       mat.emissiveIntensity = 0.42;
-    mat.metallic = 0.72;
-    mat.roughness = 0.34;
-    mat.maxSimultaneousLights = 6;
+      mat.metallic = 0.72;
+      mat.roughness = 0.34;
+      mat.maxSimultaneousLights = 6;
       const tex = this.texture(discCanvas(project.title, project.accent));
       mat.albedoTexture = tex;
       mat.emissiveTexture = tex;
@@ -610,7 +591,6 @@ export class RoomScene {
     if (!mesh) {
       return;
     }
-    // send any other inserted disc back to its rack slot with an animation
     if (this.loadedDisc !== null && this.loadedDisc !== index) {
       const prevIndex = this.loadedDisc;
       const prevMesh = this.discs[prevIndex];
@@ -687,7 +667,8 @@ export class RoomScene {
     }
 
     const bob = this.phase === 'idle' || this.phase === 'focus' ? Math.abs(Math.sin(this.elapsed * 1.1)) * 0.012 : 0;
-    this.camera.position.copyFrom(this.smoothPosition);
+    this.smoothPosition.subtractToRef(this.smoothTarget, this.viewOffset).scaleInPlace(this.viewScale);
+    this.camera.position.copyFrom(this.smoothTarget).addInPlace(this.viewOffset);
     this.camera.position.y += bob;
     this.camera.setTarget(this.smoothTarget);
   }
@@ -937,7 +918,6 @@ export class RoomScene {
     this.doorPickable.push(door, handle);
     door.metadata = { hotspotId: 'door' };
     handle.metadata = { hotspotId: 'door' };
-    this.anchors.set('door', new Vector3(0, 1.2, 4.2));
 
     const frameMat = this.pbr('frame', '#251c3a', { roughness: 0.6 });
     this.box('frameL', { w: 0.18, h: 2.5, d: 0.24 }, new Vector3(-0.72, 1.25, 3.9), frameMat);
@@ -1343,7 +1323,6 @@ export class RoomScene {
       m.metadata = { hotspotId: 'desk' as HotspotId };
     });
     this.interiorPickable.set('desk', deskHotspot);
-    this.anchors.set('desk', new Vector3(0, 1.15, -3.2));
   }
 
   private buildShelf(): void {
@@ -1473,7 +1452,6 @@ export class RoomScene {
       m.metadata = { hotspotId: 'shelf' as HotspotId };
     });
     this.interiorPickable.set('shelf', pickables);
-    this.anchors.set('shelf', new Vector3(x, 1.35, -1.4));
   }
 
   private buildTv(): void {
@@ -1550,7 +1528,6 @@ export class RoomScene {
       mesh.metadata = { hotspotId: 'tv' as HotspotId };
     });
     this.interiorPickable.set('tv', tvPickables);
-    this.anchors.set('tv', new Vector3(3.2, 1.2, tvZ));
   }
 
   private buildChair(): void {
@@ -1851,17 +1828,21 @@ export class RoomScene {
   }
 
   private attachEvents(): void {
+    this.canvas.addEventListener('pointerdown', this.onPointerDown);
     this.canvas.addEventListener('pointermove', this.onPointerMove);
     this.canvas.addEventListener('pointerleave', this.onPointerLeave);
     this.canvas.addEventListener('pointerup', this.onPointerUp);
+    this.canvas.addEventListener('pointercancel', this.onPointerCancel);
     document.addEventListener('visibilitychange', this.onVisibility);
     window.addEventListener('resize', this.onResize);
   }
 
   private detachEvents(): void {
+    this.canvas.removeEventListener('pointerdown', this.onPointerDown);
     this.canvas.removeEventListener('pointermove', this.onPointerMove);
     this.canvas.removeEventListener('pointerleave', this.onPointerLeave);
     this.canvas.removeEventListener('pointerup', this.onPointerUp);
+    this.canvas.removeEventListener('pointercancel', this.onPointerCancel);
     document.removeEventListener('visibilitychange', this.onVisibility);
     window.removeEventListener('resize', this.onResize);
   }
@@ -1876,7 +1857,14 @@ export class RoomScene {
     }
   };
 
+  private readonly onPointerDown = (event: PointerEvent): void => {
+    this.tapStart = { x: event.clientX, y: event.clientY };
+  };
+
   private readonly onPointerMove = (event: PointerEvent): void => {
+    if (event.pointerType !== 'mouse') {
+      return;
+    }
     this.pickPending = event;
     if (this.pickScheduled) {
       return;
@@ -1893,17 +1881,24 @@ export class RoomScene {
   };
 
   private readonly onPointerLeave = (): void => {
-    // force clear all outlines globally
-    this.scene.meshes.forEach((m) => {
-      if ((m as any).renderOutline) (m as any).renderOutline = false;
-    });
+    this.tapStart = null;
     this.hoveredId = null;
     this.hoveredDisc = null;
     this.clearHighlights();
     this.callbacks.onHover?.(null);
   };
 
+  private readonly onPointerCancel = (): void => {
+    this.tapStart = null;
+    this.pickPending = null;
+  };
+
   private readonly onPointerUp = (event: PointerEvent): void => {
+    const down = this.tapStart;
+    this.tapStart = null;
+    if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > 14) {
+      return;
+    }
     const target = this.pickAt(event);
     if (!target) {
       return;
@@ -1999,14 +1994,11 @@ export class RoomScene {
   }
 
   private applyHotspotHighlight(id: HotspotId): void {
-    // Outline rendering was causing nearby meshes (books, mugs, etc) to vanish on hover in this build;
-    // rely on cursor + label feedback instead to avoid the visual bug.
     void id;
     this.canvas.style.cursor = 'pointer';
   }
 
   private applyDiscHighlight(index: number): void {
-    // disc highlight intentionally disabled to avoid disappearing-mesh bug seen with outline renderer
     void index;
     this.canvas.style.cursor = 'pointer';
   }
@@ -2043,7 +2035,6 @@ export class RoomScene {
     this.vhsValue = 1;
     this.doorTween = 0;
     this.elevatorOpening = true;
-    this.callbacks.onEnter?.();
     this.callbacks.onPhase?.('entering');
     this.startTransition(IDLE, 3.2);
     window.setTimeout(() => {
