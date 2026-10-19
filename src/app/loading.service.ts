@@ -1,6 +1,6 @@
 import { Injectable, computed, signal } from '@angular/core';
 
-const MIN_VISIBLE_MS = 1500;
+const MIN_VISIBLE_MS = 3600;
 
 @Injectable({ providedIn: 'root' })
 export class LoadingService {

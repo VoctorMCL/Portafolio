@@ -28,6 +28,7 @@ import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder'
 import { CreateTorus } from '@babylonjs/core/Meshes/Builders/torusBuilder';
 import { CreateGround } from '@babylonjs/core/Meshes/Builders/groundBuilder';
 import { ExtrudeShape } from '@babylonjs/core/Meshes/Builders/shapeBuilder';
+import { CreatePlane } from '@babylonjs/core/Meshes/Builders/planeBuilder';
 import '@babylonjs/core/Culling/ray';
 import '@babylonjs/core/Rendering/outlineRenderer';
 import { VHS_SHADER_NAME } from './vhs-post';
@@ -42,10 +43,12 @@ import {
   rugCanvas,
   screenCanvas,
   sidingCanvas,
+  logoPosterCanvas,
   skyCanvas,
   wallCanvas,
   woodCanvas,
 } from './textures';
+import type { LogoKey } from './textures';
 
 export type HotspotId = 'door' | 'shelf' | 'tv' | 'desk';
 export type InteriorId = Exclude<HotspotId, 'door'>;
@@ -296,7 +299,7 @@ export class RoomScene {
   private doorTween?: number;
   private elevatorLeft?: Mesh;
   private elevatorRight?: Mesh;
-  private elevatorT = 0.25;
+  private elevatorT = 0;
   private elevatorOpening = false;
   private chairRoot?: TransformNode;
   private chairT = 0;
@@ -318,7 +321,7 @@ export class RoomScene {
   private discs: Mesh[] = [];
   private discHomes: Vector3[] = [];
   private discProjects: DiscProject[] = [];
-  private discTween?: { mesh: Mesh; from: Vector3; to: Vector3; elapsed: number; duration: number };
+  private discTweens: Array<{ mesh: Mesh; from: Vector3; to: Vector3; elapsed: number; duration: number; hideAtEnd: boolean }> = [];
   private mediaOpen = false;
   private loadedDisc: number | null = null;
   private tvScreenMat?: PBRMaterial;
@@ -487,6 +490,14 @@ export class RoomScene {
 
   ejectDisc(): void {
     if (this.loadedDisc === null) {
+      for (let i = 0; i < this.discs.length; i++) {
+        const mesh = this.discs[i];
+        mesh.position.copyFrom(this.discHomes[i]);
+        mesh.setEnabled(true);
+      }
+      this.discTweens = [];
+      this.mediaOpen = false;
+      this.setScreen(null);
       return;
     }
     const index = this.loadedDisc;
@@ -495,8 +506,8 @@ export class RoomScene {
     this.setScreen(null);
     if (mesh) {
       mesh.setEnabled(true);
-      mesh.position.copyFrom(DVD_SLOT);
-      this.discTween = { mesh, from: DVD_SLOT.clone(), to: this.discHomes[index].clone(), elapsed: 0, duration: 0.5 };
+      this.discTweens = this.discTweens.filter((t) => t.mesh !== mesh);
+      this.discTweens.push({ mesh, from: mesh.position.clone(), to: this.discHomes[index].clone(), elapsed: 0, duration: 0.5, hideAtEnd: false });
     }
     if (this.mediaOpen) {
       this.startTransition(FOCUS.tv, 0.7);
@@ -512,21 +523,20 @@ export class RoomScene {
   }
 
   private resetMedia(): void {
+    for (let i = 0; i < this.discs.length; i++) {
+      this.discs[i].position.copyFrom(this.discHomes[i]);
+      this.discs[i].setEnabled(true);
+    }
     if (this.loadedDisc !== null) {
-      const mesh = this.discs[this.loadedDisc];
-      if (mesh) {
-        mesh.position.copyFrom(this.discHomes[this.loadedDisc]);
-        mesh.setEnabled(true);
-      }
-      this.loadedDisc = null;
       this.setScreen(null);
     }
+    this.loadedDisc = null;
     this.mediaOpen = false;
-    this.discTween = undefined;
+    this.discTweens = [];
   }
 
   private buildDiscMeshes(): void {
-    this.discTween = undefined;
+    this.discTweens = [];
     this.loadedDisc = null;
     this.hoveredDisc = null;
     for (const mesh of this.discs) {
@@ -574,38 +584,49 @@ export class RoomScene {
   }
 
   private updateDisc(dt: number): void {
-    if (!this.discTween) {
+    if (this.discTweens.length === 0) {
       return;
     }
-    const tween = this.discTween;
-    tween.elapsed += dt;
-    const t = Math.min(1, tween.elapsed / tween.duration);
-    Vector3.LerpToRef(tween.from, tween.to, easeInOutCubic(t), tween.mesh.position);
-    if (t >= 1) {
-      tween.mesh.setEnabled(false);
-      this.discTween = undefined;
+    for (let i = this.discTweens.length - 1; i >= 0; i--) {
+      const tween = this.discTweens[i];
+      tween.elapsed += dt;
+      const t = Math.min(1, tween.elapsed / tween.duration);
+      Vector3.LerpToRef(tween.from, tween.to, easeInOutCubic(t), tween.mesh.position);
+      if (t >= 1) {
+        tween.mesh.setEnabled(!tween.hideAtEnd);
+        this.discTweens.splice(i, 1);
+      }
     }
   }
 
   private insertDisc(index: number): void {
     const project = this.discProjects[index];
-    const mesh = this.discs[index];
-    if (!project || !mesh) {
+    if (!project) {
       return;
     }
+    const mesh = this.discs[index];
+    if (!mesh) {
+      return;
+    }
+    // send any other inserted disc back to its rack slot with an animation
     if (this.loadedDisc !== null && this.loadedDisc !== index) {
-      const prev = this.discs[this.loadedDisc];
-      if (prev) {
-        prev.position.copyFrom(this.discHomes[this.loadedDisc]);
-        prev.setEnabled(true);
+      const prevIndex = this.loadedDisc;
+      const prevMesh = this.discs[prevIndex];
+      if (prevMesh) {
+        prevMesh.setEnabled(true);
+        this.discTweens = this.discTweens.filter((t) => t.mesh !== prevMesh);
+        this.discTweens.push({ mesh: prevMesh, from: prevMesh.position.clone(), to: this.discHomes[prevIndex].clone(), elapsed: 0, duration: 0.5, hideAtEnd: false });
       }
     }
+    this.discTweens = this.discTweens.filter((t) => t.mesh !== mesh);
+    mesh.setEnabled(true);
+    mesh.position.copyFrom(this.discHomes[index]);
+    this.discTweens.push({ mesh, from: this.discHomes[index].clone(), to: DVD_SLOT.clone(), elapsed: 0, duration: 0.6, hideAtEnd: true });
     this.loadedDisc = index;
     this.mediaOpen = true;
     this.clearHighlights();
     this.callbacks.onHover?.(null);
     this.setScreen(discScreenCanvas(project));
-    this.discTween = { mesh, from: mesh.position.clone(), to: DVD_SLOT.clone(), elapsed: 0, duration: 0.6 };
     this.startTransition(SCREEN_POSE, 0.9);
     this.callbacks.onDiscSelect?.(project);
   }
@@ -722,6 +743,33 @@ export class RoomScene {
       dt.gammaSpace = false;
     }
     return dt;
+  }
+
+  private posterTexture(key: LogoKey, label: string): DynamicTexture {
+    let dt: DynamicTexture | undefined;
+    const canvas = logoPosterCanvas(key, label, () => {
+      if (!dt) return;
+      dt.getContext().drawImage(canvas, 0, 0);
+      dt.update();
+    });
+    dt = this.texture(canvas);
+    return dt;
+  }
+
+  private addPoster(name: string, key: LogoKey, label: string, w: number, h: number, pos: Vector3, rotY: number): void {
+    const plane = CreatePlane(name, { width: w, height: h }, this.scene);
+    plane.position.copyFrom(pos);
+    plane.rotation.y = rotY;
+    const mat = new PBRMaterial(`${name}Mat`, this.scene);
+    mat.albedoColor = Color3.Black();
+    mat.emissiveColor = Color3.White();
+    mat.emissiveIntensity = 0.55;
+    mat.emissiveTexture = this.posterTexture(key, label);
+    mat.metallic = 0;
+    mat.roughness = 1;
+    mat.backFaceCulling = true;
+    mat.maxSimultaneousLights = 6;
+    plane.material = mat;
   }
 
   private bump(mat: PBRMaterial, source: HTMLCanvasElement, uScale = 1, vScale = 1, strength = 2): void {
@@ -978,15 +1026,27 @@ export class RoomScene {
     const runner = this.slab('hallRunner', 0.9, 2.4, 0.02, 0.06, new Vector3(0, 0.013, 6.15), this.pbr('hallRunnerMat', '#ffffff', { roughness: 1 }));
     (runner.material as PBRMaterial).albedoTexture = this.texture(rugCanvas());
 
-    const picA = posterCanvas(['HOME', 'SWEET', 'HOME'], '#141030', '#6cd0ff');
-    const frameA = this.box('hallPicA', { w: 0.44, h: 0.56, d: 0.03 }, new Vector3(-1.02, 1.5, 5.4), this.pbr('hallPicAMat', '#ffffff', { roughness: 0.85 }));
-    (frameA.material as PBRMaterial).albedoTexture = this.texture(picA);
-    frameA.rotation.y = Math.PI / 2;
-
-    const picB = posterCanvas(['PISO', '3B'], '#241038', '#ff2fb0');
-    const frameB = this.box('hallPicB', { w: 0.4, h: 0.5, d: 0.03 }, new Vector3(1.02, 1.55, 6.1), this.pbr('hallPicBMat', '#ffffff', { roughness: 0.85 }));
-    (frameB.material as PBRMaterial).albedoTexture = this.texture(picB);
-    frameB.rotation.y = -Math.PI / 2;
+    const hallList: Array<{ key: any; label: string }> = [
+      { key: 'ts', label: 'TypeScript' },
+      { key: 'ng', label: 'Angular' },
+      { key: 'py', label: 'Python' },
+      { key: 'cs', label: 'C#' },
+      { key: 'js', label: 'JavaScript' },
+      { key: 'gh', label: 'GitHub' },
+    ];
+    for (let i = hallList.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = hallList[i]; hallList[i] = hallList[j]; hallList[j] = tmp;
+    }
+    const hallPosters: { key: LogoKey; label: string; w: number; h: number; pos: Vector3; rotY: number }[] = [
+      { key: hallList[0].key, label: hallList[0].label, w: 0.4, h: 0.56, pos: new Vector3(-1.04, 1.5, 5.3), rotY: -Math.PI / 2 },
+      { key: hallList[1].key, label: hallList[1].label, w: 0.4, h: 0.56, pos: new Vector3(-1.04, 1.55, 6.2), rotY: -Math.PI / 2 },
+      { key: hallList[2].key, label: hallList[2].label, w: 0.42, h: 0.58, pos: new Vector3(1.04, 1.5, 5.9), rotY: Math.PI / 2 },
+      { key: hallList[3].key, label: hallList[3].label, w: 0.4, h: 0.56, pos: new Vector3(1.04, 1.52, 6.9), rotY: Math.PI / 2 },
+    ];
+    hallPosters.forEach((p, i) => {
+      this.addPoster(`hallPoster${i}`, p.key, p.label, p.w, p.h, p.pos, p.rotY);
+    });
 
     const plate = this.box('hallPlate', { w: 0.14, h: 0.18, d: 0.04 }, new Vector3(0.9, 1.6, 4.09), this.pbr('hallPlateMat', '#161428', { roughness: 0.4, metallic: 0.4 }));
     void plate;
@@ -1071,26 +1131,64 @@ export class RoomScene {
       leg.material = metal;
     });
 
-    const monitorStand = CreateCylinder('monStand', { height: 0.3, diameter: 0.32, tessellation: 16 }, this.scene);
-    monitorStand.position = new Vector3(0, 0.92, -3.4);
+    const monitorStand = CreateCylinder('monStand', { height: 0.3, diameter: 0.36, tessellation: 16 }, this.scene);
+    monitorStand.position = new Vector3(0, 0.92, -3.38);
     monitorStand.material = metal;
-    const monitorBase = this.slab('monBase', 0.5, 0.3, 0.03, 0.06, new Vector3(0, 0.79, -3.4), metal);
-
-    const screenMat = new PBRMaterial('screenMat', this.scene);
-    screenMat.albedoColor = Color3.Black();
-    screenMat.emissiveTexture = this.texture(screenCanvas(), 1, 1, false, true, false);
-    screenMat.emissiveColor = Color3.White();
-    screenMat.emissiveIntensity = 1.5;
-    screenMat.metallic = 0;
-    screenMat.roughness = 1;
-    screenMat.maxSimultaneousLights = 6;
-    screenMat.clearCoat.isEnabled = true;
-    screenMat.clearCoat.intensity = 0.8;
-    screenMat.clearCoat.roughness = 0.12;
+    const monitorBase = this.slab('monBase', 0.58, 0.32, 0.03, 0.06, new Vector3(0, 0.79, -3.38), metal);
 
     const bezel = this.pbr('bezel', '#0a0a12', { roughness: 0.4, metallic: 0.3 });
-    const monitorBody = this.box('monitor', { w: 1.7, h: 1.0, d: 0.06 }, new Vector3(0, 1.42, -3.42), bezel);
-    const monitorScreen = this.box('monitorScreen', { w: 1.56, h: 0.86, d: 0.02 }, new Vector3(0, 1.42, -3.37), screenMat);
+
+    const termScreenMat = new PBRMaterial('termScreenMat', this.scene);
+    termScreenMat.albedoColor = Color3.Black();
+    termScreenMat.emissiveTexture = this.texture(screenCanvas(), 1, 1, false, true, false);
+    termScreenMat.emissiveColor = Color3.White();
+    termScreenMat.emissiveIntensity = 1.55;
+    termScreenMat.metallic = 0;
+    termScreenMat.roughness = 1;
+    termScreenMat.maxSimultaneousLights = 6;
+    termScreenMat.clearCoat.isEnabled = true;
+    termScreenMat.clearCoat.intensity = 0.8;
+    termScreenMat.clearCoat.roughness = 0.12;
+
+    const outScreenMat = new PBRMaterial('outScreenMat', this.scene);
+    outScreenMat.albedoColor = Color3.Black();
+    outScreenMat.emissiveColor = Color3.White();
+    outScreenMat.emissiveIntensity = 1.45;
+    outScreenMat.metallic = 0;
+    outScreenMat.roughness = 1;
+    outScreenMat.maxSimultaneousLights = 6;
+    outScreenMat.clearCoat.isEnabled = true;
+    outScreenMat.clearCoat.intensity = 0.8;
+    outScreenMat.clearCoat.roughness = 0.12;
+
+    const buildOutputCanvas = (() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512; canvas.height = 320;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#020a14';
+      ctx.fillRect(0,0,512,320);
+      ctx.fillStyle = 'rgba(40,160,255,0.08)';
+      for (let y=0;y<320;y+=4) ctx.fillRect(0,y,512,1);
+      ctx.font = '16px monospace';
+      const lines = [
+        '> build --mode=prod',
+        '  [config] loaded angular.json',
+        '  [build] compiling application...',
+        '  [bundle] assets inlined',
+        '  [done] dist/Portafolio/browser',
+        '> npm run start',
+        '  ready on http://localhost:4200',
+        '> _',
+      ];
+      lines.forEach((l,i)=>{ ctx.fillStyle = i<5?'#6cd0ff':i===5?'#c8e6ff':i===6?'#9ef0ff':'#ff6bd0'; ctx.fillText(l, 18, 40 + i*28); });
+      return canvas;
+    })();
+    outScreenMat.emissiveTexture = this.texture(buildOutputCanvas, 1, 1, false, true, false);
+
+    const monitorBodyL = this.box('monitorL', { w: 1.1, h: 0.95, d: 0.06 }, new Vector3(-0.68, 1.42, -3.42), bezel);
+    const monitorScreenL = this.box('monitorScreenL', { w: 0.98, h: 0.8, d: 0.02 }, new Vector3(-0.68, 1.42, -3.37), termScreenMat);
+    const monitorBodyR = this.box('monitorR', { w: 1.1, h: 0.95, d: 0.06 }, new Vector3(0.68, 1.42, -3.42), bezel);
+    const monitorScreenR = this.box('monitorScreenR', { w: 0.98, h: 0.8, d: 0.02 }, new Vector3(0.68, 1.42, -3.37), outScreenMat);
 
     const kb = this.slab('keyboard', 1.0, 0.36, 0.04, 0.03, new Vector3(0, 0.79, -3.0), this.pbr('kb', '#1a1a24', { roughness: 0.6 }));
     const kbTop = this.slab('kbTop', 0.92, 0.28, 0.02, 0.02, new Vector3(0, 0.815, -3.0), this.pbr('kbTop', '#242433', { roughness: 0.5 }));
@@ -1212,8 +1310,10 @@ export class RoomScene {
       top,
       monitorBase,
       monitorStand,
-      monitorBody,
-      monitorScreen,
+      monitorBodyL,
+      monitorScreenL,
+      monitorBodyR,
+      monitorScreenR,
       kb,
       kbTop,
       mouse,
@@ -1411,9 +1511,9 @@ export class RoomScene {
     tvPickables.push(tvBody, tvBezel, screenMesh);
 
     [0.86, 1.14].forEach((y, i) => {
-      const knob = CreateCylinder('tvKnob' + i, { height: 0.04, diameter: 0.1, tessellation: 16 }, this.scene);
+      const knob = CreateCylinder('tvKnob' + i, { height: 0.04, diameter: 0.05, tessellation: 16 }, this.scene);
       knob.rotation.z = Math.PI / 2;
-      knob.position = new Vector3(3.44, y, tvZ + 0.3);
+      knob.position = new Vector3(3.42, y, tvZ - 0.39);
       knob.material = metal;
       tvPickables.push(knob);
     });
@@ -1571,13 +1671,29 @@ export class RoomScene {
   }
 
   private buildDecor(): void {
-    const posterA = posterCanvas(['<>', 'CÓDIGO', '& CAFÉ'], '#1a1030', '#39e0ff');
-    const posterB = posterCanvas(['1UP', 'RETRO', 'CLUB'], '#2a0f24', '#ff2fb0');
-    const backPoster = this.slab('posterA', 0.62, 0.02, 0.82, 0.01, new Vector3(-2.4, 1.9, -3.98), this.pbr('posterAMat', '#ffffff', { roughness: 0.9 }));
-    (backPoster.material as PBRMaterial).albedoTexture = this.texture(posterA, 1, 1, false, true, false);
-    const sidePoster = this.slab('posterB', 0.62, 0.02, 0.82, 0.01, new Vector3(4.05, 1.85, 0.4), this.pbr('posterBMat', '#ffffff', { roughness: 0.9 }));
-    (sidePoster.material as PBRMaterial).albedoTexture = this.texture(posterB, 1, 1, false, true, false);
-    sidePoster.rotation.y = Math.PI / 2;
+    const logoList: Array<{ key: LogoKey; label: string }> = [
+      { key: 'js', label: 'JavaScript' },
+      { key: 'gh', label: 'GitHub' },
+      { key: 'ts', label: 'TypeScript' },
+      { key: 'py', label: 'Python' },
+      { key: 'ng', label: 'Angular' },
+      { key: 'cs', label: 'C#' },
+    ];
+    for (let i = logoList.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = logoList[i]; logoList[i] = logoList[j]; logoList[j] = tmp;
+    }
+    const roomPosters: { key: LogoKey; label: string; w: number; h: number; pos: Vector3; rotY: number }[] = [
+      { key: logoList[0].key, label: logoList[0].label, w: 0.6, h: 0.8, pos: new Vector3(3.35, 1.7, -4.14), rotY: Math.PI },
+      { key: logoList[1].key, label: logoList[1].label, w: 0.5, h: 0.7, pos: new Vector3(-2.6, 2.05, -4.14), rotY: Math.PI },
+      { key: logoList[2].key, label: logoList[2].label, w: 0.5, h: 0.7, pos: new Vector3(-4.14, 1.55, 0.4), rotY: -Math.PI / 2 },
+      { key: logoList[3].key, label: logoList[3].label, w: 0.5, h: 0.7, pos: new Vector3(-4.14, 1.55, 2.9), rotY: -Math.PI / 2 },
+      { key: logoList[4].key, label: logoList[4].label, w: 0.55, h: 0.75, pos: new Vector3(4.14, 1.75, 2.8), rotY: Math.PI / 2 },
+      { key: logoList[5].key, label: logoList[5].label, w: 0.5, h: 0.7, pos: new Vector3(4.14, 1.75, 0.2), rotY: Math.PI / 2 },
+    ];
+    roomPosters.forEach((p, i) => {
+      this.addPoster(`roomPoster${i}`, p.key, p.label, p.w, p.h, p.pos, p.rotY);
+    });
 
     const ring = CreateTorus('neonRing', { diameter: 1.5, thickness: 0.045, tessellation: 48 }, this.scene);
     ring.position = new Vector3(2.1, 2.1, -3.9);
@@ -1784,6 +1900,12 @@ export class RoomScene {
   };
 
   private readonly onPointerLeave = (): void => {
+    // force clear all outlines globally
+    this.scene.meshes.forEach((m) => {
+      if ((m as any).renderOutline) (m as any).renderOutline = false;
+    });
+    this.hoveredId = null;
+    this.hoveredDisc = null;
     this.clearHighlights();
     this.callbacks.onHover?.(null);
   };
@@ -1884,42 +2006,23 @@ export class RoomScene {
   }
 
   private applyHotspotHighlight(id: HotspotId): void {
-    this.meshesFor(id).forEach((mesh) => {
-      mesh.renderOutline = true;
-      mesh.outlineColor = ACCENT;
-      mesh.outlineWidth = 0.02;
-    });
+    // Outline rendering was causing nearby meshes (books, mugs, etc) to vanish on hover in this build;
+    // rely on cursor + label feedback instead to avoid the visual bug.
+    void id;
     this.canvas.style.cursor = 'pointer';
   }
 
   private applyDiscHighlight(index: number): void {
-    const mesh = this.discs[index];
-    if (mesh) {
-      mesh.renderOutline = true;
-      mesh.outlineColor = ACCENT;
-      mesh.outlineWidth = 0.02;
-    }
+    // disc highlight intentionally disabled to avoid disappearing-mesh bug seen with outline renderer
+    void index;
     this.canvas.style.cursor = 'pointer';
   }
 
   private clearHotspotHighlight(): void {
-    if (!this.hoveredId) {
-      return;
-    }
-    this.meshesFor(this.hoveredId).forEach((mesh) => {
-      mesh.renderOutline = false;
-    });
     this.canvas.style.cursor = '';
   }
 
   private clearDiscHighlight(): void {
-    if (this.hoveredDisc === null) {
-      return;
-    }
-    const mesh = this.discs[this.hoveredDisc];
-    if (mesh) {
-      mesh.renderOutline = false;
-    }
     this.canvas.style.cursor = '';
   }
 
