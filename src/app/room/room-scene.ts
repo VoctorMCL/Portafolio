@@ -47,8 +47,9 @@ import {
   skyCanvas,
   wallCanvas,
   woodCanvas,
+  cachedSkillLogos,
 } from './textures';
-import type { LogoKey } from './textures';
+import type { SkillLogo } from './textures';
 
 export type HotspotId = 'door' | 'shelf' | 'tv' | 'desk';
 export type InteriorId = Exclude<HotspotId, 'door'>;
@@ -323,6 +324,7 @@ export class RoomScene {
   private discProjects: DiscProject[] = [];
   private discTweens: Array<{ mesh: Mesh; from: Vector3; to: Vector3; elapsed: number; duration: number; hideAtEnd: boolean }> = [];
   private mediaOpen = false;
+  private posterPool?: SkillLogo[];
   private loadedDisc: number | null = null;
   private tvScreenMat?: PBRMaterial;
   private tvScreenTexture?: DynamicTexture;
@@ -745,9 +747,21 @@ export class RoomScene {
     return dt;
   }
 
-  private posterTexture(key: LogoKey, label: string): DynamicTexture {
+  private posterPoolShuffled(): SkillLogo[] {
+    if (!this.posterPool) {
+      const a = [...cachedSkillLogos()];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      this.posterPool = a;
+    }
+    return this.posterPool;
+  }
+
+  private posterTexture(skill: SkillLogo): DynamicTexture {
     let dt: DynamicTexture | undefined;
-    const canvas = logoPosterCanvas(key, label, () => {
+    const canvas = logoPosterCanvas(skill, () => {
       if (!dt) return;
       dt.getContext().drawImage(canvas, 0, 0);
       dt.update();
@@ -756,15 +770,16 @@ export class RoomScene {
     return dt;
   }
 
-  private addPoster(name: string, key: LogoKey, label: string, w: number, h: number, pos: Vector3, rotY: number): void {
+  private addPoster(name: string, skill: SkillLogo, w: number, h: number, pos: Vector3, rotY: number): void {
     const plane = CreatePlane(name, { width: w, height: h }, this.scene);
     plane.position.copyFrom(pos);
     plane.rotation.y = rotY;
+    plane.metadata = { skill: skill.slug, label: skill.label };
     const mat = new PBRMaterial(`${name}Mat`, this.scene);
     mat.albedoColor = Color3.Black();
     mat.emissiveColor = Color3.White();
     mat.emissiveIntensity = 0.55;
-    mat.emissiveTexture = this.posterTexture(key, label);
+    mat.emissiveTexture = this.posterTexture(skill);
     mat.metallic = 0;
     mat.roughness = 1;
     mat.backFaceCulling = true;
@@ -1026,26 +1041,15 @@ export class RoomScene {
     const runner = this.slab('hallRunner', 0.9, 2.4, 0.02, 0.06, new Vector3(0, 0.013, 6.15), this.pbr('hallRunnerMat', '#ffffff', { roughness: 1 }));
     (runner.material as PBRMaterial).albedoTexture = this.texture(rugCanvas());
 
-    const hallList: Array<{ key: any; label: string }> = [
-      { key: 'ts', label: 'TypeScript' },
-      { key: 'ng', label: 'Angular' },
-      { key: 'py', label: 'Python' },
-      { key: 'cs', label: 'C#' },
-      { key: 'js', label: 'JavaScript' },
-      { key: 'gh', label: 'GitHub' },
-    ];
-    for (let i = hallList.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      const tmp = hallList[i]; hallList[i] = hallList[j]; hallList[j] = tmp;
-    }
-    const hallPosters: { key: LogoKey; label: string; w: number; h: number; pos: Vector3; rotY: number }[] = [
-      { key: hallList[0].key, label: hallList[0].label, w: 0.4, h: 0.56, pos: new Vector3(-1.04, 1.5, 5.3), rotY: -Math.PI / 2 },
-      { key: hallList[1].key, label: hallList[1].label, w: 0.4, h: 0.56, pos: new Vector3(-1.04, 1.55, 6.2), rotY: -Math.PI / 2 },
-      { key: hallList[2].key, label: hallList[2].label, w: 0.42, h: 0.58, pos: new Vector3(1.04, 1.5, 5.9), rotY: Math.PI / 2 },
-      { key: hallList[3].key, label: hallList[3].label, w: 0.4, h: 0.56, pos: new Vector3(1.04, 1.52, 6.9), rotY: Math.PI / 2 },
+    const hallSkills = this.posterPoolShuffled().slice(0, 4);
+    const hallPosters: { skill: SkillLogo; w: number; h: number; pos: Vector3; rotY: number }[] = [
+      { skill: hallSkills[0], w: 0.4, h: 0.56, pos: new Vector3(-1.04, 1.5, 5.3), rotY: -Math.PI / 2 },
+      { skill: hallSkills[1], w: 0.4, h: 0.56, pos: new Vector3(-1.04, 1.55, 6.2), rotY: -Math.PI / 2 },
+      { skill: hallSkills[2], w: 0.42, h: 0.58, pos: new Vector3(1.04, 1.5, 5.9), rotY: Math.PI / 2 },
+      { skill: hallSkills[3], w: 0.4, h: 0.56, pos: new Vector3(1.04, 1.52, 6.9), rotY: Math.PI / 2 },
     ];
     hallPosters.forEach((p, i) => {
-      this.addPoster(`hallPoster${i}`, p.key, p.label, p.w, p.h, p.pos, p.rotY);
+      this.addPoster(`hallPoster${i}`, p.skill, p.w, p.h, p.pos, p.rotY);
     });
 
     const plate = this.box('hallPlate', { w: 0.14, h: 0.18, d: 0.04 }, new Vector3(0.9, 1.6, 4.09), this.pbr('hallPlateMat', '#161428', { roughness: 0.4, metallic: 0.4 }));
@@ -1671,28 +1675,17 @@ export class RoomScene {
   }
 
   private buildDecor(): void {
-    const logoList: Array<{ key: LogoKey; label: string }> = [
-      { key: 'js', label: 'JavaScript' },
-      { key: 'gh', label: 'GitHub' },
-      { key: 'ts', label: 'TypeScript' },
-      { key: 'py', label: 'Python' },
-      { key: 'ng', label: 'Angular' },
-      { key: 'cs', label: 'C#' },
-    ];
-    for (let i = logoList.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      const tmp = logoList[i]; logoList[i] = logoList[j]; logoList[j] = tmp;
-    }
-    const roomPosters: { key: LogoKey; label: string; w: number; h: number; pos: Vector3; rotY: number }[] = [
-      { key: logoList[0].key, label: logoList[0].label, w: 0.6, h: 0.8, pos: new Vector3(3.35, 1.7, -4.14), rotY: Math.PI },
-      { key: logoList[1].key, label: logoList[1].label, w: 0.5, h: 0.7, pos: new Vector3(-2.6, 2.05, -4.14), rotY: Math.PI },
-      { key: logoList[2].key, label: logoList[2].label, w: 0.5, h: 0.7, pos: new Vector3(-4.14, 1.55, 0.4), rotY: -Math.PI / 2 },
-      { key: logoList[3].key, label: logoList[3].label, w: 0.5, h: 0.7, pos: new Vector3(-4.14, 1.55, 2.9), rotY: -Math.PI / 2 },
-      { key: logoList[4].key, label: logoList[4].label, w: 0.55, h: 0.75, pos: new Vector3(4.14, 1.75, 2.8), rotY: Math.PI / 2 },
-      { key: logoList[5].key, label: logoList[5].label, w: 0.5, h: 0.7, pos: new Vector3(4.14, 1.75, 0.2), rotY: Math.PI / 2 },
+    const roomSkills = this.posterPoolShuffled().slice(4, 10);
+    const roomPosters: { skill: SkillLogo; w: number; h: number; pos: Vector3; rotY: number }[] = [
+      { skill: roomSkills[0], w: 0.6, h: 0.8, pos: new Vector3(3.35, 1.7, -4.14), rotY: Math.PI },
+      { skill: roomSkills[1], w: 0.5, h: 0.7, pos: new Vector3(-2.6, 2.05, -4.14), rotY: Math.PI },
+      { skill: roomSkills[2], w: 0.5, h: 0.7, pos: new Vector3(-4.14, 1.55, 0.4), rotY: -Math.PI / 2 },
+      { skill: roomSkills[3], w: 0.5, h: 0.7, pos: new Vector3(-4.14, 1.55, 2.9), rotY: -Math.PI / 2 },
+      { skill: roomSkills[4], w: 0.55, h: 0.75, pos: new Vector3(4.14, 1.75, 2.8), rotY: Math.PI / 2 },
+      { skill: roomSkills[5], w: 0.5, h: 0.7, pos: new Vector3(4.14, 1.75, 0.2), rotY: Math.PI / 2 },
     ];
     roomPosters.forEach((p, i) => {
-      this.addPoster(`roomPoster${i}`, p.key, p.label, p.w, p.h, p.pos, p.rotY);
+      this.addPoster(`roomPoster${i}`, p.skill, p.w, p.h, p.pos, p.rotY);
     });
 
     const ring = CreateTorus('neonRing', { diameter: 1.5, thickness: 0.045, tessellation: 48 }, this.scene);

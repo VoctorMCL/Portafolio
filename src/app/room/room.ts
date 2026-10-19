@@ -14,6 +14,7 @@ import { LoadingService } from '../loading.service';
 import { InfoPanel, PanelSection } from '../ui/info-panel/info-panel';
 import { DiscProject, getProjects } from '../data/github';
 import { HoverInfo, HotspotId, PanelId, RoomScene, ScenePhase, ViewId } from './room-scene';
+import { loadSkillLogos } from './textures';
 import { VhsHud } from '../ui/vhs-hud/vhs-hud';
 
 const SECTION_BY_HOTSPOT: Record<PanelId, PanelSection> = {
@@ -74,23 +75,26 @@ export class Room implements OnDestroy {
 
   constructor() {
     afterNextRender(() => {
-      try {
-        const scene = new RoomScene(this.canvasRef().nativeElement, {
-          onHover: (info) => this.hover.set(info),
-          onSelect: (id) => this.openSection(id),
-          onDiscSelect: (project) => this.disc.set(project),
-          onPhase: (phase) => this.phase.set(phase),
-        });
-        this.scene = scene;
-        if (this.loadingService.visible()) {
-          scene.pause();
+      void (async () => {
+        try {
+          await loadSkillLogos();
+          const scene = new RoomScene(this.canvasRef().nativeElement, {
+            onHover: (info) => this.hover.set(info),
+            onSelect: (id) => this.openSection(id),
+            onDiscSelect: (project) => this.disc.set(project),
+            onPhase: (phase) => this.phase.set(phase),
+          });
+          this.scene = scene;
+          if (this.loadingService.visible()) {
+            scene.pause();
+          }
+          scene.setProjects(getProjects());
+          scene.setPhase('intro');
+          scene.start();
+        } catch (error) {
+          console.error('No se pudo iniciar la escena 3D:', error);
         }
-        scene.setProjects(getProjects());
-        scene.setPhase('intro');
-        scene.start();
-      } catch (error) {
-        console.error('No se pudo iniciar la escena 3D:', error);
-      }
+      })();
     });
 
     window.addEventListener('keydown', this.onKeydown);
