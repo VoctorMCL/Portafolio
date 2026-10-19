@@ -316,8 +316,8 @@ export class RoomScene {
   private readonly viewOffset = new Vector3();
   private readonly coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
   private readonly tone = this.coarsePointer
-    ? { exposure: 1.75, vhsVignette: 0.04, ipVignette: 0.6, hemi: 0.8, moon: 1.35, fill: 0.75, shadowDarkness: 0.28, env: 1.1, contrast: 1.2, lift: 0.04 }
-    : { exposure: 1.16, vhsVignette: 0.2, ipVignette: 2.0, hemi: 0.34, moon: 0.92, fill: 0.36, shadowDarkness: 0.48, env: 0.64, contrast: 1.32, lift: 0.012 };
+    ? { exposure: 2.3, vhsVignette: 0.02, ipVignette: 0.4, hemi: 1.05, moon: 1.6, fill: 1.0, shadowDarkness: 0.22, env: 1.35, contrast: 1.16, lift: 0.05 }
+    : { exposure: 1.45, vhsVignette: 0.14, ipVignette: 1.6, hemi: 0.46, moon: 1.05, fill: 0.44, shadowDarkness: 0.42, env: 0.8, contrast: 1.28, lift: 0.03 };
 
   private discs: Mesh[] = [];
   private discHomes: Vector3[] = [];
@@ -356,7 +356,7 @@ export class RoomScene {
   ) {
     this.engine = new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: false }, false);
     const dpr = window.devicePixelRatio || 1;
-    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 1.5 : 2));
+    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 1.25 : 2));
     this.scene = new Scene(this.engine);
     this.scene.clearColor = new Color4(0.02, 0.01, 0.05, 1);
     this.scene.fogMode = Scene.FOGMODE_EXP2;
@@ -447,6 +447,7 @@ export class RoomScene {
 
     this.attachEvents();
     this.updateViewport();
+    this.freezeStaticMatrices();
     this.engine.runRenderLoop(() => this.render());
   }
 
@@ -763,13 +764,46 @@ export class RoomScene {
     if (this.elapsed < 3) {
       return;
     }
-    if (fps >= 40) {
+    if (fps >= 45) {
       this.slowWindows = 0;
       return;
     }
     this.slowWindows += 1;
     if (this.slowWindows >= 2) {
       this.applyLowQuality();
+    }
+  }
+
+  private freezeStaticMatrices(): void {
+    const animated = new Set<TransformNode | Mesh>();
+    if (this.doorPivot) {
+      animated.add(this.doorPivot);
+    }
+    if (this.elevatorLeft) {
+      animated.add(this.elevatorLeft);
+    }
+    if (this.elevatorRight) {
+      animated.add(this.elevatorRight);
+    }
+    if (this.chairRoot) {
+      animated.add(this.chairRoot);
+    }
+    this.discs.forEach((disc) => animated.add(disc));
+    for (const mesh of this.scene.meshes) {
+      let node: TransformNode | null = mesh;
+      let isAnimated = false;
+      while (node) {
+        if (animated.has(node)) {
+          isAnimated = true;
+          break;
+        }
+        node = node.parent as TransformNode | null;
+      }
+      if (isAnimated) {
+        continue;
+      }
+      mesh.freezeWorldMatrix();
+      mesh.doNotSyncBoundingInfo = true;
     }
   }
 
@@ -784,21 +818,22 @@ export class RoomScene {
     }
     this.pipeline.samples = 1;
     this.pipeline.sharpenEnabled = false;
-    this.pipeline.bloomKernel = 12;
-    this.pipeline.bloomWeight = 0.07;
+    this.pipeline.bloomKernel = 8;
+    this.pipeline.bloomWeight = 0.06;
     this.pipeline.grain.animated = false;
     this.pipeline.grain.intensity = 3;
-    this.glow.blurKernelSize = 16;
+    this.glow.blurKernelSize = 12;
     if (this.shadow) {
-      this.shadow.mapSize = 1024;
-      this.shadow.blurKernel = 12;
+      this.shadow.mapSize = 512;
+      this.shadow.blurKernel = 8;
       const map = this.shadow.getShadowMap();
       if (map) {
-        map.refreshRate = 12;
+        map.refreshRate = 30;
       }
     }
     const dpr = window.devicePixelRatio || 1;
-    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 1.1 : 1.4));
+    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 1 : 1.3));
+    this.freezeStaticMatrices();
   }
 
   private updateCamera(dt: number): void {
@@ -1989,7 +2024,7 @@ export class RoomScene {
     shadow.blurKernel = this.coarsePointer ? 12 : 24;
     shadow.darkness = this.tone.shadowDarkness;
     if (shadow.getShadowMap()) {
-      shadow.getShadowMap()!.refreshRate = this.coarsePointer ? 12 : 6;
+      shadow.getShadowMap()!.refreshRate = this.coarsePointer ? 24 : 6;
     }
     this.shadow = shadow;
 
