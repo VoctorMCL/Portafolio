@@ -281,6 +281,12 @@ export class RoomScene {
   private readonly glow: GlowLayer;
   private readonly pipeline: DefaultRenderingPipeline;
   private readonly vhs: PostProcess;
+  private shadow?: ShadowGenerator;
+  private ssao?: SSAO2RenderingPipeline;
+  private lowQuality = false;
+  private fpsFrames = 0;
+  private fpsTime = 0;
+  private slowWindows = 0;
 
   private transition?: { from: Pose; to: Pose; elapsed: number; duration: number };
   private doorPivot?: TransformNode;
@@ -366,7 +372,10 @@ export class RoomScene {
     this.camera.position.copyFrom(this.smoothPosition);
     this.camera.setTarget(this.smoothTarget);
 
-    this.glow = new GlowLayer('glow', this.scene, { blurKernelSize: 32, mainTextureRatio: 0.5 });
+    this.glow = new GlowLayer('glow', this.scene, {
+      blurKernelSize: this.coarsePointer ? 16 : 32,
+      mainTextureRatio: this.coarsePointer ? 0.25 : 0.5,
+    });
     this.glow.intensity = 0.35;
 
     this.buildEnvironment();
@@ -375,27 +384,30 @@ export class RoomScene {
     this.buildHallway();
     this.buildLights();
 
-    try {
-      if (SSAO2RenderingPipeline.IsSupported) {
-        const ssao = new SSAO2RenderingPipeline('ssao2', this.scene, { ssaoRatio: 0.5, blurRatio: 1 }, [this.camera]);
-        ssao.radius = 0.8;
-        ssao.totalStrength = 0.9;
-        ssao.maxZ = 25;
-        ssao.bilateralSoften = 0.5;
+    if (!this.coarsePointer) {
+      try {
+        if (SSAO2RenderingPipeline.IsSupported) {
+          const ssao = new SSAO2RenderingPipeline('ssao2', this.scene, { ssaoRatio: 0.5, blurRatio: 1 }, [this.camera]);
+          ssao.radius = 0.8;
+          ssao.totalStrength = 0.9;
+          ssao.maxZ = 25;
+          ssao.bilateralSoften = 0.5;
+          this.ssao = ssao;
+        }
+      } catch (error) {
+        console.warn('SSAO no disponible:', error);
       }
-    } catch (error) {
-      console.warn('SSAO no disponible:', error);
     }
 
     this.pipeline = new DefaultRenderingPipeline('pipe', true, this.scene, [this.camera]);
     this.pipeline.fxaaEnabled = true;
-    this.pipeline.samples = 4;
+    this.pipeline.samples = this.coarsePointer ? 1 : 4;
     this.pipeline.bloomEnabled = true;
     this.pipeline.bloomThreshold = 0.72;
     this.pipeline.bloomWeight = 0.09;
-    this.pipeline.bloomKernel = 24;
+    this.pipeline.bloomKernel = this.coarsePointer ? 12 : 24;
     this.pipeline.bloomScale = 1.0;
-    this.pipeline.sharpenEnabled = true;
+    this.pipeline.sharpenEnabled = !this.coarsePointer;
     this.pipeline.sharpen.edgeAmount = 0.22;
     this.pipeline.sharpen.colorAmount = 1;
     this.pipeline.imageProcessing.toneMappingEnabled = true;
@@ -408,8 +420,8 @@ export class RoomScene {
     this.pipeline.imageProcessing.vignetteWeight = this.tone.ipVignette;
     this.pipeline.imageProcessing.vignetteColor = new Color4(0.02, 0.0, 0.07, 0);
     this.pipeline.grainEnabled = true;
-    this.pipeline.grain.intensity = 5;
-    this.pipeline.grain.animated = true;
+    this.pipeline.grain.intensity = this.coarsePointer ? 3 : 5;
+    this.pipeline.grain.animated = !this.coarsePointer;
     this.pipeline.chromaticAberrationEnabled = true;
     this.pipeline.chromaticAberration.aberrationAmount = 12;
     this.pipeline.chromaticAberration.radialIntensity = 0.4;
@@ -731,8 +743,62 @@ export class RoomScene {
     this.updateDisc(dt);
     this.updateChair(dt);
     this.updateCamera(dt);
+    this.sampleFps(dt);
 
     this.scene.render();
+  }
+
+  private sampleFps(dt: number): void {
+    if (this.lowQuality) {
+      return;
+    }
+    this.fpsFrames += 1;
+    this.fpsTime += dt;
+    if (this.fpsTime < 1.5) {
+      return;
+    }
+    const fps = this.fpsFrames / this.fpsTime;
+    this.fpsFrames = 0;
+    this.fpsTime = 0;
+    if (this.elapsed < 3) {
+      return;
+    }
+    if (fps >= 40) {
+      this.slowWindows = 0;
+      return;
+    }
+    this.slowWindows += 1;
+    if (this.slowWindows >= 2) {
+      this.applyLowQuality();
+    }
+  }
+
+  private applyLowQuality(): void {
+    if (this.lowQuality) {
+      return;
+    }
+    this.lowQuality = true;
+    if (this.ssao) {
+      this.ssao.dispose();
+      this.ssao = undefined;
+    }
+    this.pipeline.samples = 1;
+    this.pipeline.sharpenEnabled = false;
+    this.pipeline.bloomKernel = 12;
+    this.pipeline.bloomWeight = 0.07;
+    this.pipeline.grain.animated = false;
+    this.pipeline.grain.intensity = 3;
+    this.glow.blurKernelSize = 16;
+    if (this.shadow) {
+      this.shadow.mapSize = 1024;
+      this.shadow.blurKernel = 12;
+      const map = this.shadow.getShadowMap();
+      if (map) {
+        map.refreshRate = 12;
+      }
+    }
+    const dpr = window.devicePixelRatio || 1;
+    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 1.1 : 1.4));
   }
 
   private updateCamera(dt: number): void {
@@ -811,7 +877,7 @@ export class RoomScene {
     if (flipV) dt.vOffset = 1;
     dt.wrapU = Texture.WRAP_ADDRESSMODE;
     dt.wrapV = Texture.WRAP_ADDRESSMODE;
-    dt.anisotropicFilteringLevel = 16;
+    dt.anisotropicFilteringLevel = this.coarsePointer ? 4 : 16;
     if (linear) {
       dt.gammaSpace = false;
     }
@@ -1918,13 +1984,14 @@ export class RoomScene {
     fill.intensity = this.tone.fill;
     fill.diffuse = hex('#9db4ff');
 
-    const shadow = new ShadowGenerator(2048, moon);
+    const shadow = new ShadowGenerator(this.coarsePointer ? 1024 : 2048, moon);
     shadow.useBlurExponentialShadowMap = true;
-    shadow.blurKernel = 24;
+    shadow.blurKernel = this.coarsePointer ? 12 : 24;
     shadow.darkness = this.tone.shadowDarkness;
     if (shadow.getShadowMap()) {
-      shadow.getShadowMap()!.refreshRate = 6;
+      shadow.getShadowMap()!.refreshRate = this.coarsePointer ? 12 : 6;
     }
+    this.shadow = shadow;
 
     this.scene.meshes.forEach((mesh) => {
       if (mesh.name !== 'sky' && !mesh.name.startsWith('fairy')) {
