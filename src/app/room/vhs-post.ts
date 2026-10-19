@@ -11,6 +11,7 @@ uniform sampler2D textureSampler;
 uniform float uTime;
 uniform float uVhs;
 uniform float uVignette;
+uniform float uLift;
 uniform vec2 uResolution;
 
 float hash(vec2 p) {
@@ -43,6 +44,7 @@ void main() {
   vec3 hiTint = vec3(0.86, 0.95, 1.06);
   col = mix(col + shadowTint * (1.0 - lum), col * hiTint, smoothstep(0.2, 0.9, lum));
   col = mix(vec3(lum), col, 1.05);
+  col += vec3(uLift);
 
   vec2 p = uv - 0.5;
   float vig = smoothstep(0.98, 0.4, length(p));
