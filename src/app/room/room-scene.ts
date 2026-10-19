@@ -1,7 +1,7 @@
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
-import { Vector2, Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Matrix, Vector2, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { Constants } from '@babylonjs/core/Engines/constants';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
@@ -1896,7 +1896,8 @@ export class RoomScene {
   private readonly onPointerUp = (event: PointerEvent): void => {
     const down = this.tapStart;
     this.tapStart = null;
-    if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > 14) {
+    const slop = event.pointerType === 'mouse' ? 12 : 32;
+    if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > slop) {
       return;
     }
     const target = this.pickAt(event);
@@ -1971,7 +1972,7 @@ export class RoomScene {
       return false;
     });
     if (!pick?.hit || !pick.pickedMesh) {
-      return null;
+      return this.pickNearestDisc(event);
     }
     const meta = pick.pickedMesh.metadata as { hotspotId?: HotspotId; discIndex?: number } | null;
     if (meta && typeof meta.discIndex === 'number') {
@@ -1981,6 +1982,43 @@ export class RoomScene {
       return { kind: 'hotspot', id: meta.hotspotId };
     }
     return null;
+  }
+
+  private pickNearestDisc(event: PointerEvent): PickTarget | null {
+    if (!this.mediaOpen || this.discs.length === 0) {
+      return null;
+    }
+    if (event.pointerType === 'mouse' && !this.coarsePointer) {
+      return null;
+    }
+    const rect = this.canvas.getBoundingClientRect();
+    const renderWidth = this.engine.getRenderWidth();
+    const renderHeight = this.engine.getRenderHeight();
+    if (!rect.width || !rect.height || !renderWidth || !renderHeight) {
+      return null;
+    }
+    const viewport = this.camera.viewport.toGlobal(renderWidth, renderHeight);
+    const transform = this.scene.getTransformMatrix();
+    const scaleX = rect.width / renderWidth;
+    const scaleY = rect.height / renderHeight;
+    const px = event.clientX - rect.left;
+    const py = event.clientY - rect.top;
+    let nearest = -1;
+    let nearestDistance = Infinity;
+    for (let i = 0; i < this.discs.length; i++) {
+      const mesh = this.discs[i];
+      if (!mesh.isEnabled()) {
+        continue;
+      }
+      const projected = Vector3.Project(mesh.getAbsolutePosition(), Matrix.IdentityReadOnly, transform, viewport);
+      const distance = Math.hypot(projected.x * scaleX - px, projected.y * scaleY - py);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = i;
+      }
+    }
+    const radius = Math.min(38, Math.max(24, rect.width * 0.09));
+    return nearest >= 0 && nearestDistance <= radius ? { kind: 'disc', index: nearest } : null;
   }
 
   private isPickable(id: HotspotId): boolean {
