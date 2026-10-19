@@ -13,6 +13,7 @@ import {
 import { LoadingService } from '../loading.service';
 import { InfoPanel, PanelSection } from '../ui/info-panel/info-panel';
 import { DiscProject, getProjects } from '../data/github';
+import { ROOM_CONTENT } from '../data/portfolio';
 import { HoverInfo, HotspotId, PanelId, RoomScene, ScenePhase, ViewId } from './room-scene';
 import { loadSkillLogos } from './textures';
 import { VhsHud } from '../ui/vhs-hud/vhs-hud';
@@ -27,6 +28,7 @@ const LABEL_BY_HOTSPOT: Record<HotspotId, string> = {
   shelf: 'Sobre mí',
   tv: 'Proyectos',
   desk: 'Contacto',
+  terminal: 'Consola',
 };
 
 const ROOM_VIEWS: ViewId[] = ['general', 'tv', 'desk', 'shelf'];
@@ -57,6 +59,7 @@ export class Room implements OnDestroy {
   protected readonly section = signal<PanelSection | null>(null);
   protected readonly phase = signal<ScenePhase>('intro');
   protected readonly disc = signal<DiscProject | null>(null);
+  protected readonly consoleActive = signal(false);
   protected readonly compactNav = signal(true);
   protected readonly viewIndex = signal(0);
   protected readonly viewLabel = computed(() => VIEW_LABEL[ROOM_VIEWS[this.viewIndex()]]);
@@ -83,12 +86,20 @@ export class Room implements OnDestroy {
             onSelect: (id) => this.openSection(id),
             onDiscSelect: (project) => this.disc.set(project),
             onPhase: (phase) => this.phase.set(phase),
+            onConsole: (open) => this.onConsoleChange(open),
           });
           this.scene = scene;
           if (this.loadingService.visible()) {
             scene.pause();
           }
           scene.setProjects(getProjects());
+          scene.setConsoleContext({
+            handle: ROOM_CONTENT.handle,
+            role: ROOM_CONTENT.role,
+            about: ROOM_CONTENT.about,
+            skills: ROOM_CONTENT.skills,
+            contact: ROOM_CONTENT.contact,
+          });
           scene.setPhase('intro');
         } catch (error) {
           console.error('No se pudo iniciar la escena 3D:', error);
@@ -144,12 +155,25 @@ export class Room implements OnDestroy {
   }
 
   private onEscape(): void {
-    if (this.disc()) {
+    if (this.consoleActive()) {
+      this.scene?.closeConsole();
+    } else if (this.disc()) {
       this.closeDisc();
     } else if (this.section()) {
       this.closeSection();
     } else if (this.phase() === 'focus') {
       this.scene?.returnToIdle();
+    }
+  }
+
+  private onConsoleChange(open: boolean): void {
+    this.consoleActive.set(open);
+    if (open) {
+      this.hover.set(null);
+      if (this.section()) {
+        this.section.set(null);
+        this.viewIndex.set(0);
+      }
     }
   }
 

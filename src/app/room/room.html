@@ -18,6 +18,8 @@
         <span class="disc-bar__label">{{ project.title }}</span>
         <button type="button" class="disc-bar__btn" (click)="closeDisc()">Expulsar disco</button>
       </div>
+    } @else if (consoleActive()) {
+      <p class="hint">{{ compactNav() ? 'Conecta un teclado para usar la consola' : 'Escribe un comando en el monitor · Esc para salir' }}</p>
     } @else if (phase() === 'intro') {
       <p class="hint">{{ compactNav() ? 'Toca las puertas del ascensor para entrar' : 'Haz clic en las puertas del ascensor para entrar' }}</p>
     } @else if (phase() === 'idle') {

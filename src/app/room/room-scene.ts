@@ -49,8 +49,8 @@ import {
 } from './textures';
 import type { SkillLogo } from './textures';
 
-export type HotspotId = 'door' | 'shelf' | 'tv' | 'desk';
-export type InteriorId = Exclude<HotspotId, 'door'>;
+export type HotspotId = 'door' | 'shelf' | 'tv' | 'desk' | 'terminal';
+export type InteriorId = Exclude<HotspotId, 'door' | 'terminal'>;
 export type PanelId = Exclude<InteriorId, 'tv'>;
 export type ScenePhase = 'intro' | 'entering' | 'idle' | 'focus';
 export type ViewId = 'general' | 'tv' | 'desk' | 'shelf';
@@ -63,6 +63,16 @@ export interface HoverInfo {
   y: number;
 }
 
+export interface ConsoleContext {
+  handle: string;
+  role: string;
+  about: string[];
+  skills: string[];
+  contact: { email: string; github?: string; linkedin?: string; location?: string };
+}
+
+type ConsoleLine = { text: string; color: string };
+
 type PickTarget = { kind: 'hotspot'; id: HotspotId } | { kind: 'disc'; index: number };
 
 export interface RoomSceneCallbacks {
@@ -70,6 +80,7 @@ export interface RoomSceneCallbacks {
   onSelect?: (id: PanelId) => void;
   onDiscSelect?: (project: DiscProject) => void;
   onPhase?: (phase: ScenePhase) => void;
+  onConsole?: (open: boolean) => void;
 }
 
 interface Pose {
@@ -121,6 +132,25 @@ const ACCENT = Color3.FromHexString('#8fd6ff');
 const NEON_PINK = Color3.FromHexString('#ff2fb0');
 const NEON_CYAN = Color3.FromHexString('#39e0ff');
 const NEON_PURPLE = Color3.FromHexString('#8a4dff');
+
+const CONSOLE_PROMPT = 'victor@portafolio:~$ ';
+const CONSOLE_INPUT_MAX = 30;
+const CONSOLE_OUT_LINES = 11;
+const TERM_CYAN = '#6cd0ff';
+const TERM_SOFT = '#c8e6ff';
+const TERM_WHITE = '#eaf5ff';
+const TERM_DIM = '#7f93b3';
+const TERM_PINK = '#ff6bd0';
+
+const CONSOLE_BOOT: ConsoleLine[] = [
+  { text: '> build --mode=prod', color: TERM_CYAN },
+  { text: '  [config] loaded angular.json', color: TERM_CYAN },
+  { text: '  [build] compiling application...', color: TERM_CYAN },
+  { text: '  [bundle] assets inlined', color: TERM_CYAN },
+  { text: '  [done] dist/Portafolio/browser', color: TERM_CYAN },
+  { text: '> npm run start', color: TERM_SOFT },
+  { text: '  ready on http://localhost:4200', color: TERM_SOFT },
+];
 
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -309,6 +339,26 @@ export class RoomScene {
   private tvScreenMat?: PBRMaterial;
   private tvScreenTexture?: DynamicTexture;
 
+  private termScreenMat?: PBRMaterial;
+  private outScreenMat?: PBRMaterial;
+  private termCanvas = document.createElement('canvas');
+  private outCanvas = document.createElement('canvas');
+  private termTexture?: DynamicTexture;
+  private outTexture?: DynamicTexture;
+  private consoleOpen = false;
+  private consoleInput = '';
+  private consoleCursor = true;
+  private lastCursor = 0;
+  private consoleOut: ConsoleLine[] = [];
+  private consoleEcho: string[] = [];
+  private consoleHistory: string[] = [];
+  private consoleHistIndex = -1;
+  private consoleCtx?: ConsoleContext;
+  private readonly consoleKeyHandler = (ev: KeyboardEvent): void => {
+    this.handleConsoleKey(ev);
+  };
+  private consoleKeysAttached = false;
+
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly callbacks: RoomSceneCallbacks = {},
@@ -440,6 +490,7 @@ export class RoomScene {
     if (phase === 'focus') {
       return;
     }
+    this.exitConsole();
     this.resetMedia();
     this.phase = phase;
     this.goal = phase === 'intro' ? INTRO : IDLE;
@@ -447,6 +498,7 @@ export class RoomScene {
   }
 
   focus(id: InteriorId): void {
+    this.exitConsole();
     this.resetMedia();
     this.phase = 'focus';
     this.goal = FOCUS[id];
@@ -454,12 +506,14 @@ export class RoomScene {
   }
 
   setView(view: ViewId): void {
+    this.exitConsole();
     this.resetMedia();
     this.phase = 'idle';
     this.goal = view === 'general' ? IDLE : FOCUS[view];
   }
 
   returnToIdle(): void {
+    this.exitConsole();
     this.resetMedia();
     this.phase = 'idle';
     this.goal = IDLE;
@@ -469,6 +523,22 @@ export class RoomScene {
   setProjects(projects: DiscProject[]): void {
     this.discProjects = projects.slice(0, MAX_DISCS);
     this.buildDiscMeshes();
+  }
+
+  private attachConsoleKeys(): void {
+    if (this.consoleKeysAttached) {
+      return;
+    }
+    document.addEventListener('keydown', this.consoleKeyHandler, true);
+    this.consoleKeysAttached = true;
+  }
+
+  private detachConsoleKeys(): void {
+    if (!this.consoleKeysAttached) {
+      return;
+    }
+    document.removeEventListener('keydown', this.consoleKeyHandler, true);
+    this.consoleKeysAttached = false;
   }
 
   ejectDisc(): void {
@@ -498,6 +568,7 @@ export class RoomScene {
   }
 
   private openDiscRack(): void {
+    this.exitConsole();
     this.resetMedia();
     this.phase = 'focus';
     this.goal = FOCUS.tv;
@@ -583,6 +654,7 @@ export class RoomScene {
   }
 
   private insertDisc(index: number): void {
+    this.exitConsole();
     const project = this.discProjects[index];
     if (!project) {
       return;
@@ -625,6 +697,7 @@ export class RoomScene {
   dispose(): void {
     this.disposed = true;
     this.detachEvents();
+    this.detachConsoleKeys();
     this.engine.stopRenderLoop();
     this.scene.dispose();
     this.engine.dispose();
@@ -635,6 +708,12 @@ export class RoomScene {
     }
     const dt = this.engine.getDeltaTime() / 1000;
     this.elapsed += dt;
+
+    if (this.consoleOpen && this.elapsed - this.lastCursor > 0.6) {
+      this.lastCursor = this.elapsed;
+      this.consoleCursor = !this.consoleCursor;
+      this.updateTermScreen();
+    }
 
     this.updateDoor(dt);
     this.updateElevator(dt);
@@ -1094,6 +1173,22 @@ export class RoomScene {
     });
   }
 
+  private initConsole(): void {
+    this.termCanvas.width = 512;
+    this.termCanvas.height = 320;
+    this.outCanvas.width = 512;
+    this.outCanvas.height = 320;
+    this.consoleOut = CONSOLE_BOOT.slice();
+    this.consoleEcho = [];
+    this.consoleInput = '';
+    this.consoleCursor = true;
+    this.lastCursor = 0;
+    this.consoleHistory = [];
+    this.consoleHistIndex = -1;
+    this.updateTermScreen();
+    this.updateOutScreen();
+  }
+
   private buildDesk(): void {
     const deskSrc = woodCanvas();
     const wood = this.pbr('deskWood', '#ffffff', { roughness: 0.45 });
@@ -1123,8 +1218,8 @@ export class RoomScene {
     const bezel = this.pbr('bezel', '#0a0a12', { roughness: 0.4, metallic: 0.3 });
 
     const termScreenMat = new PBRMaterial('termScreenMat', this.scene);
+    this.termScreenMat = termScreenMat;
     termScreenMat.albedoColor = Color3.Black();
-    termScreenMat.emissiveTexture = this.texture(screenCanvas(), 1, 1, false, true, false);
     termScreenMat.emissiveColor = Color3.White();
     termScreenMat.emissiveIntensity = 1.55;
     termScreenMat.metallic = 0;
@@ -1135,6 +1230,7 @@ export class RoomScene {
     termScreenMat.clearCoat.roughness = 0.12;
 
     const outScreenMat = new PBRMaterial('outScreenMat', this.scene);
+    this.outScreenMat = outScreenMat;
     outScreenMat.albedoColor = Color3.Black();
     outScreenMat.emissiveColor = Color3.White();
     outScreenMat.emissiveIntensity = 1.45;
@@ -1150,9 +1246,9 @@ export class RoomScene {
       canvas.width = 512; canvas.height = 320;
       const ctx = canvas.getContext('2d')!;
       ctx.fillStyle = '#020a14';
-      ctx.fillRect(0,0,512,320);
+      ctx.fillRect(0, 0, 512, 320);
       ctx.fillStyle = 'rgba(40,160,255,0.08)';
-      for (let y=0;y<320;y+=4) ctx.fillRect(0,y,512,1);
+      for (let y = 0; y < 320; y += 4) ctx.fillRect(0, y, 512, 1);
       ctx.font = '16px monospace';
       const lines = [
         '> build --mode=prod',
@@ -1164,15 +1260,28 @@ export class RoomScene {
         '  ready on http://localhost:4200',
         '> _',
       ];
-      lines.forEach((l,i)=>{ ctx.fillStyle = i<5?'#6cd0ff':i===5?'#c8e6ff':i===6?'#9ef0ff':'#ff6bd0'; ctx.fillText(l, 18, 40 + i*28); });
+      lines.forEach((l, i) => {
+        ctx.fillStyle = i < 5 ? '#6cd0ff' : i === 5 ? '#c8e6ff' : i === 6 ? '#9ef0ff' : '#ff6bd0';
+        ctx.fillText(l, 18, 40 + i * 28);
+      });
       return canvas;
     })();
-    outScreenMat.emissiveTexture = this.texture(buildOutputCanvas, 1, 1, false, true, false);
+    this.outCanvas = buildOutputCanvas;
+    this.outTexture = this.texture(this.outCanvas, 1, 1, false, true, false);
+    outScreenMat.emissiveTexture = this.outTexture;
 
-    const monitorBodyL = this.box('monitorL', { w: 1.1, h: 0.95, d: 0.06 }, new Vector3(-0.68, 1.42, -3.42), bezel);
-    const monitorScreenL = this.box('monitorScreenL', { w: 0.98, h: 0.8, d: 0.02 }, new Vector3(-0.68, 1.42, -3.37), termScreenMat);
-    const monitorBodyR = this.box('monitorR', { w: 1.1, h: 0.95, d: 0.06 }, new Vector3(0.68, 1.42, -3.42), bezel);
-    const monitorScreenR = this.box('monitorScreenR', { w: 0.98, h: 0.8, d: 0.02 }, new Vector3(0.68, 1.42, -3.37), outScreenMat);
+    this.termCanvas = screenCanvas();
+    this.termTexture = this.texture(this.termCanvas, 1, 1, false, true, false);
+    termScreenMat.emissiveTexture = this.termTexture;
+    this.initConsole();
+
+    // Cámara mirando hacia -Z: el lado izquierdo de la imagen es +X.
+    // El monitor de la izquierda (según el espectador) lleva la consola.
+    const monitorBodyL = this.box('monitorL', { w: 1.1, h: 0.95, d: 0.06 }, new Vector3(0.68, 1.42, -3.42), bezel);
+    const monitorScreenL = this.box('monitorScreenL', { w: 0.98, h: 0.8, d: 0.02 }, new Vector3(0.68, 1.42, -3.37), termScreenMat);
+    monitorScreenL.metadata = { hotspotId: 'terminal' as HotspotId };
+    const monitorBodyR = this.box('monitorR', { w: 1.1, h: 0.95, d: 0.06 }, new Vector3(-0.68, 1.42, -3.42), bezel);
+    const monitorScreenR = this.box('monitorScreenR', { w: 0.98, h: 0.8, d: 0.02 }, new Vector3(-0.68, 1.42, -3.37), outScreenMat);
 
     const kb = this.slab('keyboard', 1.0, 0.36, 0.04, 0.03, new Vector3(0, 0.79, -3.0), this.pbr('kb', '#1a1a24', { roughness: 0.6 }));
     const kbTop = this.slab('kbTop', 0.92, 0.28, 0.02, 0.02, new Vector3(0, 0.815, -3.0), this.pbr('kbTop', '#242433', { roughness: 0.5 }));
@@ -1295,7 +1404,6 @@ export class RoomScene {
       monitorBase,
       monitorStand,
       monitorBodyL,
-      monitorScreenL,
       monitorBodyR,
       monitorScreenR,
       kb,
@@ -1323,6 +1431,7 @@ export class RoomScene {
       m.metadata = { hotspotId: 'desk' as HotspotId };
     });
     this.interiorPickable.set('desk', deskHotspot);
+    this.interiorPickable.get('desk')!.push(monitorScreenL);
   }
 
   private buildShelf(): void {
@@ -1847,6 +1956,51 @@ export class RoomScene {
     window.removeEventListener('resize', this.onResize);
   }
 
+  setConsoleContext(ctx: ConsoleContext): void {
+    this.consoleCtx = ctx;
+  }
+
+  isConsoleOpen(): boolean {
+    return this.consoleOpen;
+  }
+
+  openConsole(): void {
+    if (this.consoleOpen) {
+      return;
+    }
+    this.consoleOpen = true;
+    this.resetMedia();
+    this.phase = 'focus';
+    this.goal = FOCUS.desk;
+    this.callbacks.onPhase?.('focus');
+    this.callbacks.onConsole?.(true);
+    this.consoleInput = '';
+    this.consoleHistIndex = -1;
+    this.consoleCursor = true;
+    this.lastCursor = this.elapsed;
+    this.consoleEcho = this.consoleEcho.slice(-8);
+    this.attachConsoleKeys();
+    this.updateTermScreen();
+  }
+
+  closeConsole(): void {
+    if (!this.exitConsole()) {
+      return;
+    }
+    this.returnToIdle();
+  }
+
+  private exitConsole(): boolean {
+    if (!this.consoleOpen) {
+      return false;
+    }
+    this.consoleOpen = false;
+    this.detachConsoleKeys();
+    this.callbacks.onConsole?.(false);
+    this.updateTermScreen();
+    return true;
+  }
+
   private readonly onResize = (): void => this.updateViewport();
 
   private readonly onVisibility = (): void => {
@@ -1910,17 +2064,40 @@ export class RoomScene {
     }
     if (target.id === 'door') {
       this.enterHouse();
-    } else if (target.id === 'tv') {
-      this.openDiscRack();
-    } else {
-      this.callbacks.onSelect?.(target.id as PanelId);
+      return;
     }
+    if (target.id === 'tv') {
+      this.openDiscRack();
+      return;
+    }
+    if (target.id === 'terminal') {
+      if (this.phase === 'intro' || this.phase === 'entering') {
+        return;
+      }
+      this.openConsole();
+      return;
+    }
+    if (target.id === 'desk') {
+      this.callbacks.onSelect?.(target.id as PanelId);
+      return;
+    }
+    if (target.id === 'shelf') {
+      this.callbacks.onSelect?.(target.id as PanelId);
+      return;
+    }
+    this.callbacks.onSelect?.(target.id as PanelId);
   };
 
   private updateHover(target: PickTarget | null, event: PointerEvent): void {
     const rect = this.canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+
+    if (this.consoleOpen) {
+      this.clearHighlights();
+      this.callbacks.onHover?.(null);
+      return;
+    }
 
     if (target?.kind === 'hotspot') {
       if (this.hoveredDisc !== null) {
@@ -2056,17 +2233,11 @@ export class RoomScene {
     this.hoveredDisc = null;
   }
 
-  private meshesFor(id: HotspotId): Mesh[] {
-    if (id === 'door') {
-      return this.doorPickable;
-    }
-    return this.interiorPickable.get(id) ?? [];
-  }
-
   private enterHouse(): void {
     if (this.phase === 'entering') {
       return;
     }
+    this.exitConsole();
     this.clearHighlights();
     this.callbacks.onHover?.(null);
     this.phase = 'entering';
@@ -2093,5 +2264,307 @@ export class RoomScene {
       duration,
     };
     this.goal = to;
+  }
+
+  private consoleHeader(ctx: CanvasRenderingContext2D, header: string): number {
+    const w = this.termCanvas.width;
+    const h = this.termCanvas.height;
+    const px = 18;
+    const fs = 16;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#020a14';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(40, 160, 255, 0.08)';
+    for (let y = 0; y < h; y += 4) {
+      ctx.fillRect(0, y, w, 1);
+    }
+    ctx.font = `${fs}px monospace`;
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = TERM_DIM;
+    ctx.fillText(header, px, px + fs);
+    ctx.fillStyle = 'rgba(108, 208, 255, 0.22)';
+    ctx.fillRect(px, px + fs + 10, w - px * 2, 1);
+    return px + fs + 34;
+  }
+
+  private blit(canvas: HTMLCanvasElement, texture?: DynamicTexture): void {
+    if (!texture) {
+      return;
+    }
+    texture.getContext().drawImage(canvas, 0, 0);
+    texture.update();
+  }
+
+  private clip(text: string): string {
+    return text.length > 50 ? `${text.slice(0, 49)}…` : text;
+  }
+
+  private updateTermScreen(): void {
+    const canvas = this.termCanvas;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+    const y0 = this.consoleHeader(ctx, 'consola · portafolio-3d');
+    const lh = 26;
+    const px = 18;
+    const maxLines = Math.max(1, Math.floor((canvas.height - 16 - y0) / lh) + 1);
+    const lines = [...this.consoleEcho, CONSOLE_PROMPT + this.consoleInput].slice(-maxLines);
+    for (let i = 0; i < lines.length - 1; i++) {
+      ctx.fillStyle = TERM_DIM;
+      ctx.fillText(this.clip(lines[i]), px, y0 + i * lh);
+    }
+    const promptY = y0 + (lines.length - 1) * lh;
+    ctx.fillStyle = TERM_CYAN;
+    ctx.fillText(CONSOLE_PROMPT, px, promptY);
+    const promptWidth = ctx.measureText(CONSOLE_PROMPT).width;
+    const inputWidth = ctx.measureText(this.consoleInput).width;
+    ctx.fillStyle = TERM_WHITE;
+    ctx.fillText(this.consoleInput, px + promptWidth, promptY);
+    if (this.consoleOpen) {
+      if (this.consoleCursor) {
+        ctx.fillStyle = TERM_CYAN;
+        ctx.fillRect(px + promptWidth + inputWidth + 2, promptY - 14, 9, 17);
+      }
+    } else {
+      ctx.fillStyle = 'rgba(158, 240, 255, 0.3)';
+      ctx.fillRect(px + promptWidth + inputWidth + 2, promptY - 14, 9, 17);
+    }
+    this.blit(canvas, this.termTexture);
+  }
+
+  private updateOutScreen(): void {
+    const canvas = this.outCanvas;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+    const y0 = this.consoleHeader(ctx, 'salida');
+    const lh = 26;
+    const px = 18;
+    const maxLines = Math.max(1, Math.floor((canvas.height - 16 - y0) / lh) + 1);
+    const pool = this.consoleOut.length
+      ? this.consoleOut
+      : [{ text: 'escribe "help" y pulsa Enter', color: TERM_DIM } as ConsoleLine];
+    const lines = pool.slice(-maxLines);
+    lines.forEach((line, i) => {
+      ctx.fillStyle = line.color;
+      ctx.fillText(this.clip(line.text), px, y0 + i * lh);
+    });
+    this.blit(canvas, this.outTexture);
+  }
+
+  private out(text: string, color = TERM_WHITE): void {
+    this.consoleOut.push({ text, color });
+    if (this.consoleOut.length > 60) {
+      this.consoleOut.splice(0, this.consoleOut.length - 60);
+    }
+  }
+
+  private runConsoleCommand(raw: string): void {
+    const cmd = raw.trim();
+    this.consoleEcho.push(CONSOLE_PROMPT + cmd);
+    if (this.consoleEcho.length > 9) {
+      this.consoleEcho.splice(0, this.consoleEcho.length - 9);
+    }
+    if (cmd) {
+      this.consoleHistory.push(cmd);
+      if (this.consoleHistory.length > 40) {
+        this.consoleHistory.shift();
+      }
+      this.execCommand(cmd);
+      if (this.consoleOut.length > 60) {
+        this.consoleOut.splice(0, this.consoleOut.length - 60);
+      }
+    }
+    this.updateTermScreen();
+    this.updateOutScreen();
+  }
+
+  private execCommand(cmd: string): void {
+    const ctxData = this.consoleCtx;
+    const [name = '', ...args] = cmd.split(/\s+/);
+    switch (name.toLowerCase()) {
+      case 'help':
+      case 'ayuda':
+        [
+          'comandos:',
+          '  help      esta ayuda',
+          '  whoami    identidad',
+          '  about     sobre mi',
+          '  skills    tecnologias',
+          '  projects  proyectos',
+          '  contact   contacto',
+          '  clear     limpia la salida',
+        ].forEach((line) => this.out(line, TERM_CYAN));
+        break;
+      case 'clear':
+      case 'limpiar':
+        this.consoleOut = [];
+        break;
+      case 'ls':
+        this.out('estanteria/  escritorio/  media/  sobre/', TERM_SOFT);
+        break;
+      case 'pwd':
+        this.out('/home/victor/portafolio', TERM_SOFT);
+        break;
+      case 'whoami':
+        this.out(ctxData?.handle ?? 'victor', TERM_WHITE);
+        this.out(ctxData?.role ?? 'Desarrollador de software', TERM_SOFT);
+        break;
+      case 'about':
+      case 'perfil':
+      case 'sobre': {
+        this.out('sobre mi:', TERM_CYAN);
+        const wrapped = (ctxData?.about ?? ['Desarrollador de software.']).flatMap((p) => RoomScene.wrap(p, 46));
+        const capped = wrapped.length > 8 ? [...wrapped.slice(0, 8), '…'] : wrapped;
+        capped.forEach((line) => this.out(`  ${line}`, TERM_SOFT));
+        break;
+      }
+      case 'skills':
+      case 'habilidades':
+      case 'tecnologias': {
+        const skills = ctxData?.skills ?? [];
+        this.out(`tecnologias (${skills.length}):`, TERM_CYAN);
+        RoomScene.wrapSkills(skills).forEach((line) => this.out(`  ${line}`, TERM_SOFT));
+        break;
+      }
+      case 'projects':
+      case 'proyectos':
+        this.out(`proyectos (${this.discProjects.length}):`, TERM_CYAN);
+        this.discProjects.slice(0, 8).forEach((p) => this.out(`  ${p.title} · ${p.year}`, TERM_SOFT));
+        break;
+      case 'contact':
+      case 'contacto': {
+        const c = ctxData?.contact;
+        this.out('contacto:', TERM_CYAN);
+        if (c?.email) this.out(`  ${c.email}`, TERM_SOFT);
+        if (c?.github) this.out(`  ${c.github}`, TERM_SOFT);
+        if (c?.linkedin) this.out(`  ${c.linkedin}`, TERM_SOFT);
+        if (c?.location) this.out(`  ${c.location}`, TERM_SOFT);
+        break;
+      }
+      case 'date':
+      case 'fecha':
+        this.out(new Date().toLocaleString('es-CO'), TERM_SOFT);
+        break;
+      case 'echo':
+        this.out(args.join(' ') || '(nada)', TERM_SOFT);
+        break;
+      case 'salir':
+      case 'exit':
+        this.closeConsole();
+        return;
+      default:
+        this.out(`comando no encontrado: ${name}`, TERM_PINK);
+        this.out('  escribe "help" para ver los comandos', TERM_DIM);
+        break;
+    }
+  }
+
+  private handleConsoleKey(event: KeyboardEvent): void {
+    if (!this.consoleOpen) {
+      return;
+    }
+    const key = event.key;
+    if (key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.closeConsole();
+      return;
+    }
+    if (key === 'Enter') {
+      event.preventDefault();
+      event.stopPropagation();
+      const raw = this.consoleInput;
+      this.consoleInput = '';
+      this.consoleHistIndex = -1;
+      this.runConsoleCommand(raw);
+      return;
+    }
+    if (key === 'Backspace') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (this.consoleInput) {
+        this.consoleInput = this.consoleInput.slice(0, -1);
+        this.updateTermScreen();
+      }
+      return;
+    }
+    if (key === 'ArrowUp' || key === 'ArrowDown') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.browseHistory(key === 'ArrowUp' ? 1 : -1);
+      return;
+    }
+    if (key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (this.consoleInput.length < CONSOLE_INPUT_MAX) {
+        this.consoleInput += key;
+        this.updateTermScreen();
+      }
+    }
+  }
+
+  private browseHistory(direction: number): void {
+    const count = this.consoleHistory.length;
+    if (count === 0) {
+      return;
+    }
+    if (direction > 0) {
+      this.consoleHistIndex = this.consoleHistIndex < 0 ? count - 1 : Math.max(0, this.consoleHistIndex - 1);
+    } else {
+      if (this.consoleHistIndex < 0) {
+        return;
+      }
+      this.consoleHistIndex += 1;
+      if (this.consoleHistIndex >= count) {
+        this.consoleHistIndex = -1;
+        this.consoleInput = '';
+        this.updateTermScreen();
+        return;
+      }
+    }
+    this.consoleInput = this.consoleHistory[this.consoleHistIndex] ?? '';
+    this.updateTermScreen();
+  }
+
+  private static wrap(text: string, width: number): string[] {
+    const words = text.trim().split(/\s+/);
+    const lines: string[] = [];
+    let current = '';
+    for (const word of words) {
+      const next = current ? `${current} ${word}` : word;
+      if (next.length > width && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = next;
+      }
+    }
+    if (current) {
+      lines.push(current);
+    }
+    return lines;
+  }
+
+  private static wrapSkills(skills: string[]): string[] {
+    const lines: string[] = [];
+    let current = '';
+    for (const skill of skills) {
+      const next = current ? `${current} · ${skill}` : skill;
+      if (next.length > 44 && current) {
+        lines.push(current);
+        current = skill;
+      } else {
+        current = next;
+      }
+    }
+    if (current) {
+      lines.push(current);
+    }
+    return lines;
   }
 }
