@@ -290,6 +290,7 @@ export class RoomScene {
   private shadowCasters?: AbstractMesh[];
   private moon?: DirectionalLight;
   private readonly localLights: (PointLight | SpotLight)[] = [];
+  private hallwayDeferred = false;
   private ssao?: SSAO2RenderingPipeline;
   private readonly materialCache = new Map<string, PBRMaterial>();
   private fpsFrames = 0;
@@ -390,7 +391,9 @@ export class RoomScene {
 
   private static async createEngine(canvas: HTMLCanvasElement, forceWebGL: boolean): Promise<AbstractEngine> {
     const gpu = (navigator as Navigator & { gpu?: unknown }).gpu;
-    if (!forceWebGL && gpu) {
+    // WebGPU se salta en puntero táctil: hay móviles donde initia pero renderiza negro
+    const coarse = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+    if (!forceWebGL && gpu && !coarse) {
       try {
         // import dinámico: el transpilador WGSL solo lo descargan los
         // navegadores con WebGPU (el resto se queda con WebGL)
@@ -449,7 +452,13 @@ export class RoomScene {
     this.buildEnvironment();
     this.buildExterior();
     this.buildInterior();
-    this.buildHallway();
+    // gama baja: el pasillo/elevador no se ve en el arranque; se construye
+    // al abrir la puerta (ensureHallway) para aligerar el arranque
+    if (this.tier.startLevel >= 3) {
+      this.buildHallway();
+    } else {
+      this.hallwayDeferred = true;
+    }
     this.buildLights();
 
     if (this.qualityLevel >= 4) {
@@ -1563,7 +1572,8 @@ export class RoomScene {
 
     const floor = CreateGround('floor', { width: 8.2, height: 8, subdivisions: 2 }, this.scene);
     floor.material = floorMat;
-    floor.position = new Vector3(0, 0, -0.1);
+    // 12 mm sobre el 'ground' exterior: a la misma altura z-fightea (el "piso que tiembla")
+    floor.position = new Vector3(0, 0.012, -0.1);
     const ceiling = CreateGround('ceiling', { width: 8.2, height: 8, subdivisions: 1 }, this.scene);
     ceiling.material = wallMat;
     ceiling.position = new Vector3(0, 2.7, -0.1);
@@ -2499,8 +2509,12 @@ export class RoomScene {
     ceilBulb.material = this.emissive('ceilBulbMat', hex('#fff0d0'), 1.2);
 
     // acota cada luz local a los meshes de su zona: sin esto ocupan slots
-    // del cupo de 6 luces y apagan (literalmente) luces globales en lejanos
-    for (const light of this.localLights) {
+    // del cupo de luces por material y apagan (literalmente) las globales
+    this.scopeLocalLights(this.localLights);
+  }
+
+  private scopeLocalLights(lights: (PointLight | SpotLight)[]): void {
+    for (const light of lights) {
       const radius = Math.min(light.range || 6, 5);
       const only: AbstractMesh[] = [];
       for (const mesh of this.scene.meshes) {
@@ -2514,6 +2528,34 @@ export class RoomScene {
       }
       light.includedOnlyMeshes = only;
     }
+  }
+
+  /** Gama baja: construye el pasillo en el primer acceso y lo integra a la escena. */
+  private ensureHallway(): void {
+    if (!this.hallwayDeferred) {
+      return;
+    }
+    this.hallwayDeferred = false;
+    const meshesBefore = new Set(this.scene.meshes);
+    const lightsBefore = this.localLights.length;
+    this.buildHallway();
+    this.scopeLocalLights(this.localLights.slice(lightsBefore));
+    for (const mesh of this.scene.meshes) {
+      if (meshesBefore.has(mesh)) {
+        continue;
+      }
+      if (mesh.name !== 'sky' && !mesh.name.startsWith('fairy')) {
+        mesh.receiveShadows = true;
+      }
+      if (['sky', 'ground', 'floor', 'ceiling', 'hallFloor', 'hallCeil'].includes(mesh.name) || mesh.name.startsWith('fairy')) {
+        continue;
+      }
+      if (mesh.getTotalVertices() > 0) {
+        this.shadow?.addShadowCaster(mesh);
+      }
+    }
+    this.mergeStaticMeshes();
+    this.freezeStaticMatrices();
   }
 
   private attachEvents(): void {
@@ -2831,6 +2873,7 @@ export class RoomScene {
   }
 
   enterHouse(): void {
+    this.ensureHallway();
     if (this.phase === 'entering') {
       return;
     }
