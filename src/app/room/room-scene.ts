@@ -287,6 +287,9 @@ export class RoomScene {
   private fpsFrames = 0;
   private fpsTime = 0;
   private slowWindows = 0;
+  private qualityLevel = 3;
+  private belowCount = 0;
+  private lastDown = 0;
 
   private transition?: { from: Pose; to: Pose; elapsed: number; duration: number };
   private doorPivot?: TransformNode;
@@ -754,21 +757,75 @@ export class RoomScene {
     }
     this.fpsFrames += 1;
     this.fpsTime += dt;
-    if (this.fpsTime < 1.5) {
+    if (this.fpsTime < 2.5) {
       return;
     }
     const fps = this.fpsFrames / this.fpsTime;
+    const frames = this.fpsFrames;
     this.fpsFrames = 0;
     this.fpsTime = 0;
-    if (this.elapsed < 3) {
+    if (frames < 2 || this.elapsed < 3) {
       return;
     }
-    if (fps >= 40) {
-      this.slowWindows = 0;
+    const now = performance.now ? performance.now() : Date.now();
+    if (now - this.lastDown < 2500) {
       return;
     }
-    this.slowWindows += 1;
-    if (this.slowWindows >= 2) {
+    if (fps < 34) {
+      this.belowCount++;
+      if (this.belowCount >= 2) {
+        this.stepDownQuality();
+        this.belowCount = 0;
+        this.lastDown = now;
+      }
+      return;
+    }
+    this.belowCount = 0;
+  }
+
+  private stepDownQuality(): void {
+    if (this.qualityLevel <= 0) {
+      return;
+    }
+    this.qualityLevel--;
+    const p = this.pipeline;
+    if (this.qualityLevel === 2) {
+      // 1) MSAA (el mas caro en movil/desktop)
+      p.samples = 1;
+      // 2) SSAO (caro, poco visible de noche)
+      if (this.ssao) {
+        try { this.ssao.dispose(); } catch {}
+        this.ssao = undefined;
+      }
+      // 3) bloom mas barato pero sin quitarlo (mantiene el look)
+      if (p.bloomEnabled) {
+        p.bloomKernel = Math.min(p.bloomKernel, 12);
+        p.bloomWeight = Math.min(p.bloomWeight, 0.05);
+      }
+      if (this.glow) {
+        try {
+          this.glow.blurKernelSize = Math.min(this.glow.blurKernelSize, 20);
+          (this.glow as any).mainTextureRatio = Math.min((this.glow as any).mainTextureRatio || 0.4, 0.3);
+        } catch {}
+      }
+    } else if (this.qualityLevel === 1) {
+      // 4) glow tenue (no se elimina: aporta la vibra)
+      try {
+        this.glow.intensity = 0.18;
+        this.glow.blurKernelSize = 16;
+        (this.glow as any).mainTextureRatio = 0.22;
+      } catch {}
+      // 5) sombras fuera
+      if (this.shadow) {
+        try { this.shadow.dispose(); } catch {}
+        this.shadow = undefined;
+        this.scene.shadowsEnabled = false;
+      }
+      // 6) primer recorte de resolucion (el mas efectivo)
+      const dpr = window.devicePixelRatio || 1;
+      const base = this.coarsePointer ? 1.5 : Math.min(dpr, 1.8);
+      this.engine.setHardwareScalingLevel(1 / Math.max(0.9, base * 0.85));
+    } else if (this.qualityLevel === 0) {
       this.applyLowQuality();
     }
   }
