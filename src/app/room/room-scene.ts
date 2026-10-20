@@ -20,6 +20,7 @@ import { PostProcess } from '@babylonjs/core/PostProcesses/postProcess';
 import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline';
 import { SSAO2RenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/ssao2RenderingPipeline';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
+import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { CreateSphere } from '@babylonjs/core/Meshes/Builders/sphereBuilder';
@@ -285,6 +286,7 @@ export class RoomScene {
   private ssao?: SSAO2RenderingPipeline;
   private lowQuality = false;
   private extremeQuality = false;
+  private readonly materialCache = new Map<string, PBRMaterial>();
   private fpsFrames = 0;
   private fpsTime = 0;
   private qualityLevel = 3;
@@ -455,6 +457,7 @@ export class RoomScene {
       // arranca ya recortado en dispositivos de baja capacidad
       this.stepDownQuality();
     }
+    this.optimizeStaticGeometry();
     this.engine.runRenderLoop(() => this.render());
   }
 
@@ -873,6 +876,101 @@ export class RoomScene {
     }
   }
 
+  private optimizeStaticGeometry(): void {
+    this.mergeStaticMeshes();
+    this.freezeStaticMatrices();
+  }
+
+  private collectAnimatedNodes(): Set<TransformNode | Mesh> {
+    const animated = new Set<TransformNode | Mesh>();
+    if (this.doorPivot) {
+      animated.add(this.doorPivot);
+    }
+    if (this.elevatorLeft) {
+      animated.add(this.elevatorLeft);
+    }
+    if (this.elevatorRight) {
+      animated.add(this.elevatorRight);
+    }
+    if (this.chairRoot) {
+      animated.add(this.chairRoot);
+    }
+    this.discs.forEach((disc) => animated.add(disc));
+    return animated;
+  }
+
+  private isUnderAnimatedNode(mesh: AbstractMesh, animated: Set<TransformNode | Mesh>): boolean {
+    let node: TransformNode | null = mesh;
+    while (node) {
+      if (animated.has(node)) {
+        return true;
+      }
+      node = node.parent as TransformNode | null;
+    }
+    return false;
+  }
+
+  private mergeStaticMeshes(): void {
+    const animated = this.collectAnimatedNodes();
+    const keep = new Set(['sky', 'ground', 'floor', 'ceiling', 'hallFloor', 'hallCeil']);
+
+    const groups = new Map<string, Mesh[]>();
+    for (const mesh of this.scene.meshes) {
+      if (!(mesh instanceof Mesh) || !mesh.material || mesh.getTotalVertices() === 0) {
+        continue;
+      }
+      if (this.isUnderAnimatedNode(mesh, animated) || keep.has(mesh.name)) {
+        continue;
+      }
+      const meta = (mesh.metadata as { hotspotId?: string; discIndex?: number } | null) ?? null;
+      if (meta && typeof meta.discIndex === 'number') {
+        continue;
+      }
+      const metaKey = meta ? `|meta:${meta.hotspotId ?? ''}` : '';
+      const key = `${mesh.material.uniqueId}${metaKey}`;
+      const list = groups.get(key);
+      if (list) {
+        list.push(mesh);
+      } else {
+        groups.set(key, [mesh]);
+      }
+    }
+
+    for (const group of groups.values()) {
+      if (group.length < 2) {
+        continue;
+      }
+      const material = group[0].material;
+      const meta = group[0].metadata;
+      const merged = Mesh.MergeMeshes(group, false, true, undefined, false, false);
+      if (!merged) {
+        continue;
+      }
+      group.forEach((mesh) => mesh.dispose());
+      merged.name = `merged-${material?.name ?? 'mat'}`;
+      merged.material = material;
+      merged.receiveShadows = true;
+      if (meta) {
+        merged.metadata = meta;
+        merged.isPickable = true;
+      } else {
+        merged.isPickable = false;
+      }
+      merged.freezeWorldMatrix();
+    }
+  }
+
+  private freezeStaticMatrices(): void {
+    const animated = this.collectAnimatedNodes();
+    for (const mesh of this.scene.meshes) {
+      if (this.isUnderAnimatedNode(mesh, animated)) {
+        continue;
+      }
+      mesh.freezeWorldMatrix();
+      mesh.doNotSyncBoundingInfo = true;
+    }
+  }
+
   private applyLowQuality(): void {
     if (this.lowQuality) {
       return;
@@ -1057,6 +1155,11 @@ export class RoomScene {
     color: string,
     opts: { metallic?: number; roughness?: number; emissive?: Color3; emissiveIntensity?: number } = {},
   ): PBRMaterial {
+    const key = `pbr|${name}|${color}|${opts.metallic ?? ''}|${opts.roughness ?? ''}|${opts.emissive ? opts.emissive.toHexString() : ''}|${opts.emissiveIntensity ?? ''}`;
+    const cached = this.materialCache.get(key);
+    if (cached) {
+      return cached;
+    }
     const mat = new PBRMaterial(name, this.scene);
     mat.albedoColor = hex(color);
     mat.metallic = opts.metallic ?? 0.05;
@@ -1066,10 +1169,16 @@ export class RoomScene {
       mat.emissiveColor = opts.emissive;
       mat.emissiveIntensity = opts.emissiveIntensity ?? 1;
     }
+    this.materialCache.set(key, mat);
     return mat;
   }
 
   private emissive(name: string, color: Color3, intensity = 1.4): PBRMaterial {
+    const key = `emi|${name}|${color.toHexString()}|${intensity}`;
+    const cached = this.materialCache.get(key);
+    if (cached) {
+      return cached;
+    }
     const mat = new PBRMaterial(name, this.scene);
     mat.albedoColor = Color3.Black();
     mat.emissiveColor = color;
@@ -1077,6 +1186,7 @@ export class RoomScene {
     mat.metallic = 0;
     mat.roughness = 1;
     mat.maxSimultaneousLights = 6;
+    this.materialCache.set(key, mat);
     return mat;
   }
 
