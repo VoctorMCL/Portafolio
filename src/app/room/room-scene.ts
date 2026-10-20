@@ -18,7 +18,6 @@ import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator'
 import { GlowLayer } from '@babylonjs/core/Layers/glowLayer';
 import { PostProcess } from '@babylonjs/core/PostProcesses/postProcess';
 import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline';
-import { SSAO2RenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/ssao2RenderingPipeline';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
@@ -280,13 +279,13 @@ export class RoomScene {
 
   private readonly glow: GlowLayer;
   private readonly pipeline: DefaultRenderingPipeline;
-  private readonly vhs: PostProcess;
+  private vhs?: PostProcess;
   private shadow?: ShadowGenerator;
-  private ssao?: SSAO2RenderingPipeline;
   private lowQuality = false;
   private fpsFrames = 0;
   private fpsTime = 0;
-  private slowWindows = 0;
+  private renderScale = 1;
+  private readonly softwareRenderer: boolean;
 
   private transition?: { from: Pose; to: Pose; elapsed: number; duration: number };
   private doorPivot?: TransformNode;
@@ -316,8 +315,8 @@ export class RoomScene {
   private readonly viewOffset = new Vector3();
   private readonly coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
   private readonly tone = this.coarsePointer
-    ? { exposure: 2.3, vhsVignette: 0.02, ipVignette: 0.4, hemi: 1.05, moon: 1.6, fill: 1.0, shadowDarkness: 0.22, env: 1.35, contrast: 1.16, lift: 0.05 }
-    : { exposure: 1.45, vhsVignette: 0.14, ipVignette: 1.6, hemi: 0.46, moon: 1.05, fill: 0.44, shadowDarkness: 0.42, env: 0.8, contrast: 1.28, lift: 0.03 };
+    ? { exposure: 2.3, vhsVignette: 0.02, ipVignette: 0.35, hemi: 1.05, moon: 1.6, fill: 1.0, shadowDarkness: 0.24, env: 1.4, contrast: 1.3, lift: 0.015 }
+    : { exposure: 1.5, vhsVignette: 0.12, ipVignette: 1.5, hemi: 0.5, moon: 1.1, fill: 0.48, shadowDarkness: 0.42, env: 0.85, contrast: 1.3, lift: 0.01 };
 
   private discs: Mesh[] = [];
   private discHomes: Vector3[] = [];
@@ -356,7 +355,8 @@ export class RoomScene {
   ) {
     this.engine = new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: false }, false);
     const dpr = window.devicePixelRatio || 1;
-    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 1.25 : 2));
+    this.softwareRenderer = RoomScene.detectSoftwareRenderer(canvas);
+    this.applyRenderScale(this.softwareRenderer ? 0.8 : 1.5);
     this.scene = new Scene(this.engine);
     this.scene.clearColor = new Color4(0.02, 0.01, 0.05, 1);
     this.scene.fogMode = Scene.FOGMODE_EXP2;
@@ -372,56 +372,39 @@ export class RoomScene {
     this.camera.position.copyFrom(this.smoothPosition);
     this.camera.setTarget(this.smoothTarget);
 
-    this.glow = new GlowLayer('glow', this.scene, {
-      blurKernelSize: this.coarsePointer ? 16 : 32,
-      mainTextureRatio: this.coarsePointer ? 0.25 : 0.5,
-    });
+    this.glow = new GlowLayer('glow', this.scene, { blurKernelSize: 16, mainTextureRatio: 0.25 });
     this.glow.intensity = 0.35;
 
     this.buildEnvironment();
     this.buildExterior();
     this.buildInterior();
     this.buildHallway();
+    this.mergeStaticMeshes();
     this.buildLights();
 
-    if (!this.coarsePointer) {
-      try {
-        if (SSAO2RenderingPipeline.IsSupported) {
-          const ssao = new SSAO2RenderingPipeline('ssao2', this.scene, { ssaoRatio: 0.5, blurRatio: 1 }, [this.camera]);
-          ssao.radius = 0.8;
-          ssao.totalStrength = 0.9;
-          ssao.maxZ = 25;
-          ssao.bilateralSoften = 0.5;
-          this.ssao = ssao;
-        }
-      } catch (error) {
-        console.warn('SSAO no disponible:', error);
-      }
-    }
 
     this.pipeline = new DefaultRenderingPipeline('pipe', true, this.scene, [this.camera]);
     this.pipeline.fxaaEnabled = true;
-    this.pipeline.samples = this.coarsePointer ? 1 : 4;
+    this.pipeline.samples = 1;
     this.pipeline.bloomEnabled = true;
-    this.pipeline.bloomThreshold = 0.72;
-    this.pipeline.bloomWeight = 0.09;
-    this.pipeline.bloomKernel = this.coarsePointer ? 12 : 24;
+    this.pipeline.bloomThreshold = 0.95;
+    this.pipeline.bloomWeight = 0.05;
+    this.pipeline.bloomKernel = 12;
     this.pipeline.bloomScale = 1.0;
-    this.pipeline.sharpenEnabled = !this.coarsePointer;
+    this.pipeline.sharpenEnabled = true;
     this.pipeline.sharpen.edgeAmount = 0.22;
     this.pipeline.sharpen.colorAmount = 1;
     this.pipeline.imageProcessing.toneMappingEnabled = true;
     this.pipeline.imageProcessing.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
     this.pipeline.imageProcessing.contrast = this.tone.contrast;
     this.pipeline.imageProcessing.exposure = this.tone.exposure;
-    this.pipeline.imageProcessing.ditheringEnabled = true;
-    this.pipeline.imageProcessing.ditheringIntensity = 0.04;
+    this.pipeline.imageProcessing.ditheringEnabled = false;
     this.pipeline.imageProcessing.vignetteEnabled = true;
     this.pipeline.imageProcessing.vignetteWeight = this.tone.ipVignette;
     this.pipeline.imageProcessing.vignetteColor = new Color4(0.02, 0.0, 0.07, 0);
     this.pipeline.grainEnabled = true;
-    this.pipeline.grain.intensity = this.coarsePointer ? 3 : 5;
-    this.pipeline.grain.animated = !this.coarsePointer;
+    this.pipeline.grain.intensity = 3;
+    this.pipeline.grain.animated = false;
     this.pipeline.chromaticAberrationEnabled = true;
     this.pipeline.chromaticAberration.aberrationAmount = 12;
     this.pipeline.chromaticAberration.radialIntensity = 0.4;
@@ -448,11 +431,34 @@ export class RoomScene {
     this.attachEvents();
     this.updateViewport();
     this.freezeStaticMatrices();
+    if (this.softwareRenderer) {
+      this.applyLowQuality();
+    }
     this.engine.runRenderLoop(() => this.render());
   }
 
   private static readonly BASE_FOV = (52 * Math.PI) / 180;
   private static readonly MAX_FOV = (78 * Math.PI) / 180;
+
+  private static detectSoftwareRenderer(canvas: HTMLCanvasElement): boolean {
+    try {
+      const gl = (canvas.getContext('webgl2') ?? canvas.getContext('webgl')) as WebGLRenderingContext | null;
+      if (!gl) {
+        return true;
+      }
+      const info = gl.getExtension('WEBGL_debug_renderer_info');
+      const name = info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)) : '';
+      return /swiftshader|llvmpipe|softpipe|software|basic render|microsoft basic/i.test(name);
+    } catch {
+      return false;
+    }
+  }
+
+  private applyRenderScale(scale: number): void {
+    const dpr = window.devicePixelRatio || 1;
+    this.renderScale = scale;
+    this.engine.setHardwareScalingLevel(1 / Math.max(0.5, Math.min(dpr, scale)));
+  }
 
   private updateViewport(): void {
     this.engine.resize();
@@ -750,27 +756,89 @@ export class RoomScene {
   }
 
   private sampleFps(dt: number): void {
-    if (this.lowQuality) {
-      return;
-    }
     this.fpsFrames += 1;
     this.fpsTime += dt;
     if (this.fpsTime < 1.5) {
       return;
     }
     const fps = this.fpsFrames / this.fpsTime;
+    const frames = this.fpsFrames;
     this.fpsFrames = 0;
     this.fpsTime = 0;
-    if (this.elapsed < 3) {
+    if (frames < 3) {
       return;
     }
-    if (fps >= 45) {
-      this.slowWindows = 0;
+    if (this.lowQuality) {
+      if (fps < 28 && this.renderScale > 0.62) {
+        this.applyRenderScale(Math.max(0.6, this.renderScale - 0.15));
+      }
       return;
     }
-    this.slowWindows += 1;
-    if (this.slowWindows >= 2) {
+    if (fps < 38) {
       this.applyLowQuality();
+    }
+  }
+
+  private mergeStaticMeshes(): void {
+    const pickable = new Set<Mesh>();
+    this.interiorPickable.forEach((list) => list.forEach((mesh) => pickable.add(mesh)));
+    this.doorPickable.forEach((mesh) => pickable.add(mesh));
+    const animated = new Set<TransformNode | Mesh>();
+    if (this.doorPivot) {
+      animated.add(this.doorPivot);
+    }
+    if (this.elevatorLeft) {
+      animated.add(this.elevatorLeft);
+    }
+    if (this.elevatorRight) {
+      animated.add(this.elevatorRight);
+    }
+    if (this.chairRoot) {
+      animated.add(this.chairRoot);
+    }
+    this.discs.forEach((disc) => animated.add(disc));
+    const keep = new Set(['sky', 'ground', 'floor', 'ceiling', 'hallFloor', 'hallCeil']);
+
+    const groups = new Map<number, Mesh[]>();
+    for (const mesh of this.scene.meshes) {
+      if (!(mesh instanceof Mesh) || !mesh.material || !mesh.isEnabled() || mesh.getTotalVertices() === 0) {
+        continue;
+      }
+      let node: TransformNode | null = mesh;
+      let isAnimated = false;
+      while (node) {
+        if (animated.has(node)) {
+          isAnimated = true;
+          break;
+        }
+        node = node.parent as TransformNode | null;
+      }
+      if (isAnimated || pickable.has(mesh) || keep.has(mesh.name)) {
+        continue;
+      }
+      const id = mesh.material.uniqueId;
+      const list = groups.get(id);
+      if (list) {
+        list.push(mesh);
+      } else {
+        groups.set(id, [mesh]);
+      }
+    }
+
+    for (const group of groups.values()) {
+      if (group.length < 2) {
+        continue;
+      }
+      const material = group[0].material;
+      const merged = Mesh.MergeMeshes(group, false, true, undefined, false, false);
+      if (!merged) {
+        continue;
+      }
+      group.forEach((mesh) => mesh.dispose());
+      merged.name = `merged-${material?.name ?? 'mat'}`;
+      merged.material = material;
+      merged.isPickable = false;
+      merged.receiveShadows = true;
     }
   }
 
@@ -812,27 +880,33 @@ export class RoomScene {
       return;
     }
     this.lowQuality = true;
-    if (this.ssao) {
-      this.ssao.dispose();
-      this.ssao = undefined;
-    }
-    this.pipeline.samples = 1;
-    this.pipeline.sharpenEnabled = false;
-    this.pipeline.bloomKernel = 8;
-    this.pipeline.bloomWeight = 0.06;
-    this.pipeline.grain.animated = false;
-    this.pipeline.grain.intensity = 3;
-    this.glow.blurKernelSize = 12;
-    if (this.shadow) {
-      this.shadow.mapSize = 512;
-      this.shadow.blurKernel = 8;
-      const map = this.shadow.getShadowMap();
-      if (map) {
-        map.refreshRate = 30;
+    const pipeline = this.pipeline;
+    pipeline.samples = 1;
+    pipeline.bloomEnabled = false;
+    pipeline.chromaticAberrationEnabled = false;
+    pipeline.grainEnabled = false;
+    pipeline.sharpenEnabled = true;
+    pipeline.sharpen.edgeAmount = 0.6;
+    pipeline.sharpen.colorAmount = 1;
+    pipeline.imageProcessing.ditheringEnabled = false;
+    const safe = (fn: () => void): void => {
+      try {
+        fn();
+      } catch (error) {
+        console.warn('Calidad: no se pudo liberar un recurso', error);
       }
+    };
+    if (this.vhs) {
+      safe(() => this.vhs?.dispose());
+      this.vhs = undefined;
     }
-    const dpr = window.devicePixelRatio || 1;
-    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 1 : 1.3));
+    safe(() => this.glow.dispose());
+    if (this.shadow) {
+      safe(() => this.shadow?.dispose());
+      this.shadow = undefined;
+    }
+    this.scene.shadowsEnabled = false;
+    this.applyRenderScale(this.softwareRenderer ? 0.8 : 1.15);
     this.freezeStaticMatrices();
   }
 
@@ -912,7 +986,7 @@ export class RoomScene {
     if (flipV) dt.vOffset = 1;
     dt.wrapU = Texture.WRAP_ADDRESSMODE;
     dt.wrapV = Texture.WRAP_ADDRESSMODE;
-    dt.anisotropicFilteringLevel = this.coarsePointer ? 4 : 16;
+    dt.anisotropicFilteringLevel = 4;
     if (linear) {
       dt.gammaSpace = false;
     }
@@ -2019,12 +2093,12 @@ export class RoomScene {
     fill.intensity = this.tone.fill;
     fill.diffuse = hex('#9db4ff');
 
-    const shadow = new ShadowGenerator(this.coarsePointer ? 1024 : 2048, moon);
+    const shadow = new ShadowGenerator(1024, moon);
     shadow.useBlurExponentialShadowMap = true;
-    shadow.blurKernel = this.coarsePointer ? 12 : 24;
+    shadow.blurKernel = 12;
     shadow.darkness = this.tone.shadowDarkness;
     if (shadow.getShadowMap()) {
-      shadow.getShadowMap()!.refreshRate = this.coarsePointer ? 24 : 6;
+      shadow.getShadowMap()!.refreshRate = 24;
     }
     this.shadow = shadow;
 
