@@ -45,6 +45,8 @@ const VIEW_LABEL: Record<ViewId, string> = {
 
 const COMPACT_NAV_QUERY = '(pointer: coarse), (any-hover: none), (max-width: 900px)';
 
+const RELOAD_FLAG = 'portfolio-preloaded';
+
 @Component({
   selector: 'app-room',
   imports: [InfoPanel, VhsHud],
@@ -130,6 +132,9 @@ export class Room implements OnDestroy {
             contact: ROOM_CONTENT.contact,
           });
           scene.setPhase('intro');
+          if (this.loadingService.visible()) {
+            await scene.calibrate();
+          }
           this.scheduleAutoEnter();
         } catch (error) {
           console.error('No se pudo iniciar la escena 3D:', error);
@@ -215,6 +220,15 @@ export class Room implements OnDestroy {
       return;
     }
     this.autoEnterScheduled = true;
+    try {
+      if (typeof sessionStorage !== 'undefined' && !sessionStorage.getItem(RELOAD_FLAG)) {
+        sessionStorage.setItem(RELOAD_FLAG, '1');
+        window.location.reload();
+        return;
+      }
+    } catch {
+      // sessionStorage no disponible: continuar sin recargar
+    }
     this.autoEnterTimer = window.setTimeout(() => {
       if (this.phase() === 'intro') {
         this.scene?.enterHouse();

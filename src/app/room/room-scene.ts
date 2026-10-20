@@ -290,6 +290,7 @@ export class RoomScene {
   private qualityLevel = 3;
   private belowCount = 0;
   private lastDown = 0;
+  private calibrated = false;
 
   private transition?: { from: Pose; to: Pose; elapsed: number; duration: number };
   private doorPivot?: TransformNode;
@@ -469,6 +470,40 @@ export class RoomScene {
     const cssAspect = width / height;
     this.viewScale =
       cssAspect >= 1.1 ? 1 : Math.min(1.34, 1 + (1.1 - cssAspect) * (cssAspect < 0.75 ? 0.62 : 0.4));
+  }
+
+  async calibrate(): Promise<void> {
+    if (this.calibrated || this.disposed) {
+      return;
+    }
+    this.calibrated = true;
+    try {
+      const loops = this.coarsePointer ? 6 : 3;
+      const measure = (frames: number): number => {
+        const t0 = performance.now();
+        for (let i = 0; i < frames; i++) {
+          this.scene.render();
+        }
+        return (performance.now() - t0) / frames;
+      };
+      await Promise.resolve();
+      const frameBudget = 1000 / 30;
+      // calentamiento (compila shaders, sube texturas): no se mide
+      measure(8);
+      for (let i = 0; i < loops; i++) {
+        const ms = measure(12);
+        if (ms <= frameBudget) {
+          break;
+        }
+        this.stepDownQuality();
+      }
+    } catch (error) {
+      console.warn('Calibración de rendimiento omitida:', error);
+    } finally {
+      this.fpsFrames = 0;
+      this.fpsTime = 0;
+      this.belowCount = 0;
+    }
   }
 
   pause(): void {

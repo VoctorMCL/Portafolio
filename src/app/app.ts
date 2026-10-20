@@ -8,6 +8,7 @@ import {
   inject,
   viewChild,
 } from '@angular/core';
+import { inject as injectAnalytics } from '@vercel/analytics';
 import { LoadingService } from './loading.service';
 import { Room } from './room/room';
 
@@ -31,6 +32,7 @@ export class App implements OnDestroy {
 
   constructor() {
     afterNextRender(() => {
+      injectAnalytics();
       this.startStatic();
       void this.waitForResources().then(() => this.loadingService.finish());
     });
