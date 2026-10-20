@@ -248,203 +248,43 @@
   }
 }
 
-.terminal {
+/* consola móvil sin modal: input fantasma que abre el teclado nativo;
+   la salida y el texto se ven en la pantalla 3D de la consola */
+.console-ghost {
   position: absolute;
-  z-index: 30;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  flex-direction: column;
-  height: min(78dvh, 620px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  color: #eaf5ff;
-  background: linear-gradient(180deg, rgba(4, 10, 20, 0.97), rgba(2, 6, 14, 0.99));
-  border-top: 1px solid rgba(108, 208, 255, 0.4);
-  border-radius: 20px 20px 0 0;
-  box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.6);
-  overflow: hidden;
-}
-
-.terminal::after {
-  content: '';
-  position: absolute;
-  inset: 0;
+  z-index: 40;
+  left: 50%;
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  opacity: 0;
+  border: 0;
+  background: transparent;
   pointer-events: none;
-  background: repeating-linear-gradient(180deg, rgba(108, 208, 255, 0.05) 0 1px, transparent 1px 3px);
+  font-size: 16px;
 }
 
-.terminal__bar {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.65rem 0.7rem 0.65rem 1rem;
-  background: rgba(8, 16, 30, 0.85);
-  border-bottom: 1px solid rgba(108, 208, 255, 0.22);
-}
-
-.terminal__dot {
-  flex: 0 0 auto;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #6cd0ff;
-  box-shadow: 0 0 10px #6cd0ff;
-}
-
-.terminal__title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  font-size: 0.82rem;
-  letter-spacing: 0.06em;
-  color: #c8e6ff;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.terminal__close {
-  flex: 0 0 auto;
-  width: 2.4rem;
-  height: 2.4rem;
+.console-ghost__close {
+  position: absolute;
+  z-index: 41;
+  right: 0.85rem;
+  bottom: calc(0.85rem + env(safe-area-inset-bottom, 0px));
+  width: 2.7rem;
+  height: 2.7rem;
   font: inherit;
-  font-size: 1.35rem;
+  font-size: 1.4rem;
   line-height: 1;
   color: #eaf5ff;
-  background: rgba(20, 30, 50, 0.85);
-  border: 1px solid rgba(108, 208, 255, 0.3);
+  background: rgba(20, 30, 50, 0.9);
+  border: 1px solid rgba(108, 208, 255, 0.4);
   border-radius: 999px;
-  cursor: pointer;
-}
-
-.terminal__out {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 0.85rem 1rem;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  touch-action: pan-y;
-  font-size: 0.8rem;
-  line-height: 1.55;
-  scrollbar-width: thin;
-}
-
-.terminal__line {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.terminal__chips {
-  display: flex;
-  gap: 0.4rem;
-  padding: 0.45rem 1rem 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.terminal__chips::-webkit-scrollbar {
-  display: none;
-}
-
-.terminal__chip {
-  flex: 0 0 auto;
-  padding: 0.42rem 0.8rem;
-  font: inherit;
-  font-size: 0.78rem;
-  color: #9ef0ff;
-  background: rgba(12, 26, 44, 0.9);
-  border: 1px solid rgba(108, 208, 255, 0.3);
-  border-radius: 999px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 
-.terminal__chip:active,
-.terminal__send:active,
-.terminal__close:active {
-  transform: scale(0.95);
-}
-
-.terminal__in {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 1rem 0.85rem;
-  background: rgba(8, 16, 30, 0.9);
-  border-top: 1px solid rgba(108, 208, 255, 0.22);
-}
-
-.terminal__prompt {
-  flex: 0 0 auto;
-  font-size: 0.72rem;
-  color: #6cd0ff;
-}
-
-.terminal__field {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 0.55rem 0.7rem;
-  font: inherit;
-  font-size: 0.9rem;
-  color: #eaf5ff;
-  background: rgba(2, 10, 20, 0.92);
-  border: 1px solid rgba(108, 208, 255, 0.32);
-  border-radius: 10px;
-}
-
-.terminal__field:focus {
-  border-color: rgba(108, 208, 255, 0.75);
-  outline: none;
-}
-
-.terminal__send {
-  flex: 0 0 auto;
-  padding: 0.58rem 0.95rem;
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: #06131f;
-  background: linear-gradient(120deg, #6cd0ff, #9ef0ff);
-  border: none;
-  border-radius: 10px;
-  cursor: pointer;
-}
-
-@media (max-height: 480px) {
-  .terminal {
-    height: 92dvh;
-    border-radius: 16px 16px 0 0;
-  }
-
-  .terminal__out {
-    font-size: 0.78rem;
-    line-height: 1.45;
-  }
-}
-
-/* variante móvil: barra inferior mínima (sin modal); la salida se ve en
-   el monitor 3D y el teclado nativo lo abre el foco del input */
-.terminal--bar {
-  height: auto;
-  overflow: visible;
-  background: linear-gradient(180deg, rgba(4, 10, 20, 0.9), rgba(2, 6, 14, 0.98));
-  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.5);
-}
-
-.terminal--bar .terminal__chips {
-  padding-top: 0.6rem;
-}
-
-.terminal--bar .terminal__in {
-  padding-top: 0.55rem;
-  background: transparent;
-  border-top: none;
-}
-
-.terminal--bar .terminal__close {
-  width: 2.2rem;
-  height: 2.2rem;
+.console-ghost__close:active {
+  transform: scale(0.94);
 }
 

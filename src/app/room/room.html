@@ -20,6 +20,8 @@
       </div>
     } @else if (consoleActive() && !compactNav()) {
       <p class="hint">Escribe un comando en el monitor · Esc para salir</p>
+    } @else if (consoleActive()) {
+      <p class="hint">Escribe con el teclado · &times; para salir</p>
     } @else if (phase() === 'intro') {
       <p class="hint">Abriendo las puertas del ascensor&#8230;</p>
     } @else if (mediaOpen()) {
@@ -44,36 +46,26 @@
   }
 
   @if (consoleActive() && compactNav()) {
-    <section class="terminal terminal--bar" aria-label="Consola del portafolio">
-      <div class="terminal__chips">
-        @for (entry of consoleCommands; track entry.cmd) {
-          <button type="button" class="terminal__chip" (click)="runConsoleCommand(entry.cmd)">{{ entry.cmd }}</button>
-        }
-      </div>
-
-      <form class="terminal__in" (submit)="sendConsole($event)">
-        <span class="terminal__prompt" aria-hidden="true">{{ consolePrompt }}</span>
-        <input
-          #consoleInput
-          class="terminal__field"
-          type="text"
-          name="command"
-          autocomplete="off"
-          autocapitalize="off"
-          autocorrect="off"
-          spellcheck="false"
-          enterkeyhint="send"
-          [value]="consoleDraft()"
-          (input)="onConsoleInput($event)"
-          (keydown)="onConsoleKeydown($event)"
-          aria-label="Escribe un comando"
-        />
-        <button type="submit" class="terminal__send">Enviar</button>
-        <button type="button" class="terminal__close" (click)="closeConsole()" aria-label="Cerrar consola">
-          &times;
-        </button>
-      </form>
-    </section>
+    <!-- sin modal: solo el input fantasma que abre el teclado nativo;
+         lo que se escribe se refleja en la pantalla 3D de la consola -->
+    <input
+      #consoleInput
+      class="console-ghost"
+      type="text"
+      name="command"
+      autocomplete="off"
+      autocapitalize="off"
+      autocorrect="off"
+      spellcheck="false"
+      enterkeyhint="send"
+      [value]="consoleDraft()"
+      (input)="onConsoleInput($event)"
+      (keydown)="onConsoleKeydown($event)"
+      aria-label="Escribe un comando en la consola"
+    />
+    <button type="button" class="console-ghost__close" (click)="closeConsole()" aria-label="Cerrar consola">
+      &times;
+    </button>
   }
 
   <app-info-panel [section]="section()" (close)="closeSection()" />

@@ -16,7 +16,6 @@ import { InfoPanel, PanelSection } from '../ui/info-panel/info-panel';
 import { DiscProject, getProjects } from '../data/github';
 import { ROOM_CONTENT } from '../data/portfolio';
 import { HoverInfo, HotspotId, PanelId, RoomScene, RoomSceneCallbacks, ScenePhase, ViewId } from './room-scene';
-import { CONSOLE_COMMANDS, CONSOLE_PROMPT } from './console-engine';
 import type { ConsoleLine } from './console-engine';
 import { loadSkillLogos } from './textures';
 import { VhsHud } from '../ui/vhs-hud/vhs-hud';
@@ -30,7 +29,7 @@ const LABEL_BY_HOTSPOT: Record<HotspotId, string> = {
   door: 'Entrar',
   shelf: 'Sobre mí',
   tv: 'Proyectos',
-  desk: 'Contacto',
+  desk: 'Consola',
   terminal: 'Consola',
 };
 
@@ -58,7 +57,6 @@ export class Room implements OnDestroy {
   private readonly loadingService = inject(LoadingService);
   private readonly canvasRef = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
   private readonly consoleInputRef = viewChild<ElementRef<HTMLInputElement>>('consoleInput');
-  private readonly consoleOutRef = viewChild<ElementRef<HTMLElement>>('consoleOut');
   private scene?: RoomScene;
 
   protected readonly loading = this.loadingService.visible;
@@ -82,8 +80,6 @@ export class Room implements OnDestroy {
   });
   protected readonly mediaOpen = signal(false);
   protected readonly mediaHint = computed(() => (this.compactNav() ? 'Toca un disco' : 'Elige un disco · pulsa Esc para salir'));
-  protected readonly consoleCommands = CONSOLE_COMMANDS;
-  protected readonly consolePrompt = CONSOLE_PROMPT;
   protected readonly consoleLines = signal<ConsoleLine[]>([]);
   protected readonly consoleDraft = signal('');
 
@@ -175,9 +171,6 @@ export class Room implements OnDestroy {
     afterRenderEffect(() => {
       if (!this.consoleActive() || !this.compactNav()) {
         return;
-      }
-      if (this.consoleLines().length) {
-        this.scrollConsoleToEnd();
       }
       const field = this.consoleInputRef()?.nativeElement;
       if (field && document.activeElement !== field) {
@@ -271,10 +264,20 @@ export class Room implements OnDestroy {
   }
 
   protected onConsoleInput(event: Event): void {
-    this.consoleDraft.set((event.target as HTMLInputElement).value);
+    const value = (event.target as HTMLInputElement).value;
+    this.consoleDraft.set(value);
+    // el borrador se ve en vivo en la pantalla 3D de la consola
+    this.scene?.setConsoleDraft(value);
   }
 
   protected onConsoleKeydown(event: KeyboardEvent): void {
+    // evita el doble manejo con el listener global de teclado de la escena
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.closeConsole();
+      return;
+    }
     if (event.key === 'Enter') {
       event.preventDefault();
       this.submitConsoleCommand(this.consoleDraft());
@@ -284,15 +287,6 @@ export class Room implements OnDestroy {
       event.preventDefault();
       this.browseConsoleHistory(event.key === 'ArrowUp' ? 1 : -1);
     }
-  }
-
-  protected sendConsole(event: Event): void {
-    event.preventDefault();
-    this.submitConsoleCommand(this.consoleDraft());
-  }
-
-  protected runConsoleCommand(cmd: string): void {
-    this.submitConsoleCommand(cmd);
   }
 
   protected closeConsole(): void {
@@ -308,7 +302,6 @@ export class Room implements OnDestroy {
     this.consoleHistoryIndex = -1;
     this.scene?.submitConsole(cmd);
     this.syncConsoleOutput();
-    this.scrollConsoleToEnd();
   }
 
   private browseConsoleHistory(direction: number): void {
@@ -325,18 +318,16 @@ export class Room implements OnDestroy {
           ? -1
           : this.consoleHistoryIndex + 1;
     this.consoleHistoryIndex = next >= count ? -1 : next;
-    this.consoleDraft.set(this.consoleHistoryIndex < 0 ? '' : this.consoleHistory[this.consoleHistoryIndex]);
-  }
-
-  private scrollConsoleToEnd(): void {
-    const el = this.consoleOutRef()?.nativeElement;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-    }
+    const draft = this.consoleHistoryIndex < 0 ? '' : this.consoleHistory[this.consoleHistoryIndex];
+    this.consoleDraft.set(draft);
+    this.scene?.setConsoleDraft(draft);
   }
 
   private openSection(id: PanelId): void {
     this.hover.set(null);
+    if (this.consoleActive()) {
+      this.scene?.closeConsole();
+    }
     this.section.set(SECTION_BY_HOTSPOT[id]);
     this.viewIndex.set(ROOM_VIEWS.indexOf(id));
     this.scene?.focus(id);

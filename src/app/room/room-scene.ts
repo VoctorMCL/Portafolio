@@ -538,10 +538,10 @@ export class RoomScene {
     this.viewScale =
       cssAspect >= 1.1 ? 1 : Math.min(1.34, 1 + (1.1 - cssAspect) * (cssAspect < 0.75 ? 0.62 : 0.4));
     if (this.coarsePointer) {
-      // móvil: encuadre más cerrado (pantallas del TV y las PCs más grandes)
-      // sin perder ambas pantallas del vista principal
-      this.camera.fov *= 0.9;
-      this.viewScale = 1 + (this.viewScale - 1) * 0.5;
+      // móvil: mucho zoom — el encuadre se centra en las pantallas del TV
+      // y de la PC, sin retroceso de cámara en portrait
+      this.camera.fov *= 0.78;
+      this.viewScale = 1;
     }
   }
 
@@ -2541,7 +2541,17 @@ export class RoomScene {
   }
 
   submitConsole(raw: string): void {
+    this.consoleInput = '';
     this.runConsoleCommand(raw);
+  }
+
+  /** Refleja el borrador del input del teclado móvil en la pantalla 3D. */
+  setConsoleDraft(text: string): void {
+    if (!this.consoleOpen) {
+      return;
+    }
+    this.consoleInput = text;
+    this.updateTermScreen();
   }
 
   consoleTranscript(): ConsoleLine[] {
@@ -2671,7 +2681,11 @@ export class RoomScene {
       return;
     }
     if (target.id === 'desk') {
-      this.callbacks.onSelect?.(target.id as PanelId);
+      // el escritorio abre la consola: el contacto se pide escribiendo `contact`
+      if (this.phase === 'intro' || this.phase === 'entering') {
+        return;
+      }
+      this.openConsole();
       return;
     }
     if (target.id === 'shelf') {
@@ -2970,6 +2984,11 @@ export class RoomScene {
         this.consoleEcho = [];
       } else {
         result.lines.forEach((line) => this.appendConsoleLine(line));
+      }
+      const norm = cmd.toLowerCase();
+      if (norm === 'contact' || norm === 'contacto') {
+        // el panel de contacto se abre desde la consola, no con clic
+        this.callbacks.onSelect?.('desk');
       }
     }
     this.updateTermScreen();
