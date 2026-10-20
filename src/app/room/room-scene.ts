@@ -284,6 +284,7 @@ export class RoomScene {
   private shadow?: ShadowGenerator;
   private ssao?: SSAO2RenderingPipeline;
   private lowQuality = false;
+  private extremeQuality = false;
   private fpsFrames = 0;
   private fpsTime = 0;
   private qualityLevel = 3;
@@ -481,7 +482,7 @@ export class RoomScene {
     }
     this.calibrated = true;
     try {
-      const loops = this.coarsePointer ? 6 : 3;
+      const loops = this.coarsePointer ? 8 : 6;
       const measure = (frames: number): number => {
         const t0 = performance.now();
         for (let i = 0; i < frames; i++) {
@@ -790,7 +791,7 @@ export class RoomScene {
   }
 
   private sampleFps(dt: number): void {
-    if (this.lowQuality) {
+    if (this.disposed || this.extremeQuality) {
       return;
     }
     this.fpsFrames += 1;
@@ -822,7 +823,11 @@ export class RoomScene {
   }
 
   private stepDownQuality(): void {
+    if (this.extremeQuality) {
+      return;
+    }
     if (this.qualityLevel <= 0) {
+      this.applyExtremeQuality();
       return;
     }
     this.qualityLevel--;
@@ -896,7 +901,28 @@ export class RoomScene {
       }
     }
     const dpr = window.devicePixelRatio || 1;
-    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 0.85 : 1.1));
+    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 0.7 : 0.85));
+  }
+
+  private applyExtremeQuality(): void {
+    if (this.extremeQuality) {
+      return;
+    }
+    this.extremeQuality = true;
+    this.applyLowQuality();
+    // ultimo recurso: prioriza fps sobre todo lo demas
+    if (this.shadow) {
+      this.scene.shadowsEnabled = false;
+    }
+    this.scene.environmentIntensity = 0.35;
+    for (const mat of this.scene.materials) {
+      const anyMat = mat as unknown as { anisotropicFilteringLevel?: number };
+      if (typeof anyMat.anisotropicFilteringLevel === 'number') {
+        anyMat.anisotropicFilteringLevel = 1;
+      }
+    }
+    const dpr = window.devicePixelRatio || 1;
+    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 0.55 : 0.7));
   }
 
   private updateCamera(dt: number): void {
