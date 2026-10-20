@@ -424,3 +424,27 @@
   }
 }
 
+/* variante móvil: barra inferior mínima (sin modal); la salida se ve en
+   el monitor 3D y el teclado nativo lo abre el foco del input */
+.terminal--bar {
+  height: auto;
+  overflow: visible;
+  background: linear-gradient(180deg, rgba(4, 10, 20, 0.9), rgba(2, 6, 14, 0.98));
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.5);
+}
+
+.terminal--bar .terminal__chips {
+  padding-top: 0.6rem;
+}
+
+.terminal--bar .terminal__in {
+  padding-top: 0.55rem;
+  background: transparent;
+  border-top: none;
+}
+
+.terminal--bar .terminal__close {
+  width: 2.2rem;
+  height: 2.2rem;
+}
+

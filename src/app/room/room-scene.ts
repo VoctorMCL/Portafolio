@@ -293,14 +293,8 @@ export class RoomScene {
   private hallwayDeferred = false;
   private ssao?: SSAO2RenderingPipeline;
   private readonly materialCache = new Map<string, PBRMaterial>();
-  private fpsFrames = 0;
-  private fpsTime = 0;
   private qualityLevel = 4;
-  private qualityCeiling = 4;
   private qualityApplied = false;
-  private belowCount = 0;
-  private aboveCount = 0;
-  private lastChange = 0;
   private calibrated = false;
 
   private transition?: { from: Pose; to: Pose; elapsed: number; duration: number };
@@ -421,7 +415,6 @@ export class RoomScene {
   ) {
     this.engine = engine;
     this.qualityLevel = this.tier.startLevel;
-    this.qualityCeiling = this.tier.ceiling;
     this.applyResolution();
     this.initNormalWorker();
     this.scene = new Scene(this.engine);
@@ -544,6 +537,12 @@ export class RoomScene {
     const cssAspect = width / height;
     this.viewScale =
       cssAspect >= 1.1 ? 1 : Math.min(1.34, 1 + (1.1 - cssAspect) * (cssAspect < 0.75 ? 0.62 : 0.4));
+    if (this.coarsePointer) {
+      // móvil: encuadre más cerrado (pantallas del TV y las PCs más grandes)
+      // sin perder ambas pantallas del vista principal
+      this.camera.fov *= 0.9;
+      this.viewScale = 1 + (this.viewScale - 1) * 0.5;
+    }
   }
 
   async calibrate(): Promise<void> {
@@ -583,10 +582,6 @@ export class RoomScene {
       }
     } catch (error) {
       console.warn('Calibración de rendimiento omitida:', error);
-    } finally {
-      this.fpsFrames = 0;
-      this.fpsTime = 0;
-      this.belowCount = 0;
     }
   }
 
@@ -868,49 +863,8 @@ export class RoomScene {
     this.updateDisc(dt);
     this.updateChair(dt);
     this.updateCamera(dt);
-    this.sampleFps(dt);
 
     this.scene.render();
-  }
-
-  private sampleFps(dt: number): void {
-    if (this.disposed) {
-      return;
-    }
-    this.fpsFrames += 1;
-    this.fpsTime += dt;
-    if (this.fpsTime < 2.5) {
-      return;
-    }
-    const fps = this.fpsFrames / this.fpsTime;
-    const frames = this.fpsFrames;
-    this.fpsFrames = 0;
-    this.fpsTime = 0;
-    if (frames < 2 || this.elapsed < 3) {
-      return;
-    }
-    const now = performance.now();
-    if (fps < 38) {
-      this.aboveCount = 0;
-      this.belowCount++;
-      if (this.belowCount >= 2 && this.qualityLevel > 0 && now - this.lastChange >= 3000) {
-        this.applyQualityLevel(this.qualityLevel - 1);
-        this.lastChange = now;
-        this.belowCount = 0;
-      }
-      return;
-    }
-    this.belowCount = 0;
-    if (fps > 52 && this.elapsed > 6 && this.qualityLevel < this.qualityCeiling && now - this.lastChange >= 10000) {
-      this.aboveCount++;
-      if (this.aboveCount >= 2) {
-        this.applyQualityLevel(this.qualityLevel + 1);
-        this.lastChange = now;
-        this.aboveCount = 0;
-      }
-    } else if (fps <= 52) {
-      this.aboveCount = 0;
-    }
   }
 
   private static readonly RESOLUTION_SCALE: Record<number, number> = { 4: 1, 3: 1, 2: 0.9, 1: 0.8, 0: 0.62 };

@@ -44,21 +44,7 @@
   }
 
   @if (consoleActive() && compactNav()) {
-    <section class="terminal" role="dialog" aria-label="Consola del portafolio">
-      <header class="terminal__bar">
-        <span class="terminal__dot" aria-hidden="true"></span>
-        <span class="terminal__title">consola · portafolio-3d</span>
-        <button type="button" class="terminal__close" (click)="closeConsole()" aria-label="Cerrar consola">
-          &times;
-        </button>
-      </header>
-
-      <div class="terminal__out" #consoleOut>
-        @for (line of consoleLines(); track $index) {
-          <p class="terminal__line" [style.color]="line.color">{{ line.text || ' ' }}</p>
-        }
-      </div>
-
+    <section class="terminal terminal--bar" aria-label="Consola del portafolio">
       <div class="terminal__chips">
         @for (entry of consoleCommands; track entry.cmd) {
           <button type="button" class="terminal__chip" (click)="runConsoleCommand(entry.cmd)">{{ entry.cmd }}</button>
@@ -83,6 +69,9 @@
           aria-label="Escribe un comando"
         />
         <button type="submit" class="terminal__send">Enviar</button>
+        <button type="button" class="terminal__close" (click)="closeConsole()" aria-label="Cerrar consola">
+          &times;
+        </button>
       </form>
     </section>
   }
