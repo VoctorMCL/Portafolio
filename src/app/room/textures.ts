@@ -1,3 +1,5 @@
+import { heightToNormalPixels } from './normal-map';
+
 function surface(width: number, height: number) {
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -10,34 +12,8 @@ export function heightToNormal(source: HTMLCanvasElement, strength = 2): HTMLCan
   const h = source.height;
   const { canvas, ctx } = surface(w, h);
   const src = source.getContext('2d')!.getImageData(0, 0, w, h).data;
-  const out = ctx.createImageData(w, h);
-
-  const lum = (x: number, y: number): number => {
-    const xx = (x + w) % w;
-    const yy = (y + h) % h;
-    const i = (yy * w + xx) * 4;
-    return (src[i] * 299 + src[i + 1] * 587 + src[i + 2] * 114) / 255000;
-  };
-
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const dx = (lum(x + 1, y) - lum(x - 1, y)) * strength;
-      const dy = (lum(x, y + 1) - lum(x, y - 1)) * strength;
-      let nx = -dx;
-      let ny = dy;
-      let nz = 1;
-      const inv = 1 / Math.hypot(nx, ny, nz);
-      nx *= inv;
-      ny *= inv;
-      nz *= inv;
-      const i = (y * w + x) * 4;
-      out.data[i] = (nx * 0.5 + 0.5) * 255;
-      out.data[i + 1] = (ny * 0.5 + 0.5) * 255;
-      out.data[i + 2] = (nz * 0.5 + 0.5) * 255;
-      out.data[i + 3] = 255;
-    }
-  }
-  ctx.putImageData(out, 0, 0);
+  const out = heightToNormalPixels(src, w, h, strength);
+  ctx.putImageData(new ImageData(out, w, h), 0, 0);
   return canvas;
 }
 

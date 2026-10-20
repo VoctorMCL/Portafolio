@@ -13,6 +13,7 @@ import { LoadingService } from './loading.service';
 import { Room } from './room/room';
 
 const NOISE_SCALE = 8;
+const NOISE_FRAMES = 6;
 
 @Component({
   imports: [Room],
@@ -28,7 +29,8 @@ export class App implements OnDestroy {
   private readonly noiseRef = viewChild<ElementRef<HTMLCanvasElement>>('noise');
   private frameId = 0;
   private resizeHandler?: () => void;
-  private noiseImage?: ImageData;
+  private noiseFrames: ImageData[] = [];
+  private noiseIndex = 0;
 
   constructor() {
     afterNextRender(() => {
@@ -71,7 +73,21 @@ export class App implements OnDestroy {
     const resize = () => {
       canvas.width = Math.max(1, Math.floor(window.innerWidth / NOISE_SCALE));
       canvas.height = Math.max(1, Math.floor(window.innerHeight / NOISE_SCALE));
-      this.noiseImage = ctx.createImageData(canvas.width, canvas.height);
+      // pre-genera los fotogramas de ruido: en vivo solo se alternan
+      const frames: ImageData[] = [];
+      for (let f = 0; f < NOISE_FRAMES; f++) {
+        const frame = ctx.createImageData(canvas.width, canvas.height);
+        const data = frame.data;
+        for (let i = 0; i < data.length; i += 4) {
+          const value = 40 + Math.random() * 215;
+          data[i] = value * 0.78;
+          data[i + 1] = value * 0.86;
+          data[i + 2] = value;
+          data[i + 3] = Math.random() * 175;
+        }
+        frames.push(frame);
+      }
+      this.noiseFrames = frames;
     };
     resize();
     this.resizeHandler = resize;
@@ -80,20 +96,11 @@ export class App implements OnDestroy {
     let frame = 0;
     const draw = () => {
       this.frameId = requestAnimationFrame(draw);
-      if (frame++ % 3 !== 0 || !this.noiseImage) {
+      if (frame++ % 3 !== 0 || !this.noiseFrames.length) {
         return;
       }
-      const data = this.noiseImage.data;
-
-      for (let i = 0; i < data.length; i += 4) {
-        const value = 40 + Math.random() * 215;
-        data[i] = value * 0.78;
-        data[i + 1] = value * 0.86;
-        data[i + 2] = value;
-        data[i + 3] = Math.random() * 175;
-      }
-
-      ctx.putImageData(this.noiseImage, 0, 0);
+      const current = this.noiseFrames[this.noiseIndex++ % this.noiseFrames.length];
+      ctx.putImageData(current, 0, 0);
     };
     draw();
   }

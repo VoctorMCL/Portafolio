@@ -37,7 +37,8 @@ void main() {
   col *= scan;
 
   float grain = hash(uv * uResolution + uTime) - 0.5;
-  col += grain * 0.005 * (0.15 + vhs);
+  // sustituye al grain del DefaultRenderingPipeline (intensidad 5 ≈ ±0.02)
+  col += grain * 0.039 * (0.7 + 0.3 * vhs);
 
   float lum = dot(col, vec3(0.299, 0.587, 0.114));
   // sombras frescas (azul), sin tinte magenta; luces neutras

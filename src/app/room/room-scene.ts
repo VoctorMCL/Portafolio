@@ -1,5 +1,6 @@
 import { Engine } from '@babylonjs/core/Engines/engine';
-import { Scene } from '@babylonjs/core/scene';
+import { AbstractEngine } from '@babylonjs/core/Engines/abstractEngine';
+import { Scene, ScenePerformancePriority } from '@babylonjs/core/scene';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
 import { Matrix, Vector2, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
@@ -57,6 +58,8 @@ import {
   cachedSkillLogos,
 } from './textures';
 import type { SkillLogo } from './textures';
+import { detectDeviceTier } from './device-tier';
+import type { TierInfo } from './device-tier';
 
 export type HotspotId = 'door' | 'shelf' | 'tv' | 'desk' | 'terminal';
 export type InteriorId = Exclude<HotspotId, 'door' | 'terminal'>;
@@ -269,7 +272,7 @@ function chamferBox(name: string, w: number, h: number, d: number, scene: Scene)
 }
 
 export class RoomScene {
-  private readonly engine: Engine;
+  private readonly engine: AbstractEngine;
   private readonly scene: Scene;
   private readonly camera: FreeCamera;
 
@@ -280,18 +283,23 @@ export class RoomScene {
   private readonly smoothTarget = new Vector3();
 
   private readonly glow: GlowLayer;
-  private readonly pipeline: DefaultRenderingPipeline;
-  private readonly vhs: PostProcess;
+  private pipeline: DefaultRenderingPipeline;
+  private vhs: PostProcess;
+  private vhsAttached = true;
   private shadow?: ShadowGenerator;
+  private shadowCasters?: AbstractMesh[];
+  private moon?: DirectionalLight;
+  private readonly localLights: (PointLight | SpotLight)[] = [];
   private ssao?: SSAO2RenderingPipeline;
-  private lowQuality = false;
-  private extremeQuality = false;
   private readonly materialCache = new Map<string, PBRMaterial>();
   private fpsFrames = 0;
   private fpsTime = 0;
-  private qualityLevel = 3;
+  private qualityLevel = 4;
+  private qualityCeiling = 4;
+  private qualityApplied = false;
   private belowCount = 0;
-  private lastDown = 0;
+  private aboveCount = 0;
+  private lastChange = 0;
   private calibrated = false;
 
   private transition?: { from: Pose; to: Pose; elapsed: number; duration: number };
@@ -321,9 +329,10 @@ export class RoomScene {
   private viewScale = 1;
   private readonly viewOffset = new Vector3();
   private readonly coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+  private readonly tier: TierInfo = detectDeviceTier(this.coarsePointer);
   private readonly tone = this.coarsePointer
     ? { exposure: 1.75, vhsVignette: 0.04, ipVignette: 0.6, hemi: 0.8, moon: 1.35, fill: 0.75, shadowDarkness: 0.28, env: 1.1, contrast: 1.2, lift: 0.04 }
-    : { exposure: 1.16, vhsVignette: 0.2, ipVignette: 2.0, hemi: 0.34, moon: 0.92, fill: 0.36, shadowDarkness: 0.48, env: 0.64, contrast: 1.32, lift: 0.012 };
+    : { exposure: 1.5, vhsVignette: 0.09, ipVignette: 1.1, hemi: 0.55, moon: 1.15, fill: 0.55, shadowDarkness: 0.32, env: 0.95, contrast: 1.15, lift: 0.035 };
 
   private discs: Mesh[] = [];
   private discHomes: Vector3[] = [];
@@ -356,14 +365,64 @@ export class RoomScene {
   private consoleKeysAttached = false;
   private keyboardEnabled = true;
 
-  constructor(
+  private normalWorker?: Worker;
+  private normalCounter = 0;
+  private normalPending = 0;
+  private normalJobs = new Map<number, { mat: PBRMaterial; uScale: number; vScale: number; source: HTMLCanvasElement; strength: number }>();
+  private resolveNormalMaps: (() => void) | undefined;
+  private readonly normalMapsReady = new Promise<void>((resolve) => {
+    this.resolveNormalMaps = resolve;
+  });
+
+  static async create(
+    canvas: HTMLCanvasElement,
+    callbacks: RoomSceneCallbacks = {},
+    forceWebGL = false,
+  ): Promise<RoomScene> {
+    const engine = await RoomScene.createEngine(canvas, forceWebGL);
+    try {
+      return new RoomScene(engine, canvas, callbacks);
+    } catch (error) {
+      engine.dispose();
+      throw error;
+    }
+  }
+
+  private static async createEngine(canvas: HTMLCanvasElement, forceWebGL: boolean): Promise<AbstractEngine> {
+    const gpu = (navigator as Navigator & { gpu?: unknown }).gpu;
+    if (!forceWebGL && gpu) {
+      try {
+        // import dinámico: el transpilador WGSL solo lo descargan los
+        // navegadores con WebGPU (el resto se queda con WebGL)
+        const { WebGPUEngine } = await import('@babylonjs/core/Engines/webgpuEngine');
+        if (await WebGPUEngine.IsSupportedAsync) {
+          const webgpu = new WebGPUEngine(canvas, {
+            antialias: true,
+            stencil: false,
+            adaptToDeviceRatio: false,
+          });
+          await webgpu.initAsync();
+          return webgpu;
+        }
+      } catch (error) {
+        console.warn('WebGPU no disponible, se usará WebGL:', error);
+      }
+    }
+    return new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: false }, false);
+  }
+
+  private constructor(
+    engine: AbstractEngine,
     private readonly canvas: HTMLCanvasElement,
     private readonly callbacks: RoomSceneCallbacks = {},
   ) {
-    this.engine = new Engine(canvas, true, { preserveDrawingBuffer: false, stencil: false }, false);
-    const dpr = window.devicePixelRatio || 1;
-    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 1.5 : 2));
+    this.engine = engine;
+    this.qualityLevel = this.tier.startLevel;
+    this.qualityCeiling = this.tier.ceiling;
+    this.applyResolution();
+    this.initNormalWorker();
     this.scene = new Scene(this.engine);
+    this.scene.performancePriority = ScenePerformancePriority.Intermediate;
     this.scene.clearColor = new Color4(0.02, 0.01, 0.05, 1);
     this.scene.fogMode = Scene.FOGMODE_EXP2;
     this.scene.fogColor = hex('#0b0720');
@@ -384,55 +443,62 @@ export class RoomScene {
     });
     this.glow.intensity = 0.35;
 
+    // luces globales ANTES que las locales: Babylon ata por material solo los
+    // primeros maxSimultaneousLights de scene.lights (orden de creación)
+    this.buildBaseLights();
     this.buildEnvironment();
     this.buildExterior();
     this.buildInterior();
     this.buildHallway();
     this.buildLights();
 
-    if (!this.coarsePointer) {
-      try {
-        if (SSAO2RenderingPipeline.IsSupported) {
-          const ssao = new SSAO2RenderingPipeline('ssao2', this.scene, { ssaoRatio: 0.5, blurRatio: 1 }, [this.camera]);
-          ssao.radius = 0.8;
-          ssao.totalStrength = 0.9;
-          ssao.maxZ = 25;
-          ssao.bilateralSoften = 0.5;
-          this.ssao = ssao;
-        }
-      } catch (error) {
-        console.warn('SSAO no disponible:', error);
-      }
+    if (this.qualityLevel >= 4) {
+      this.ensureSsao();
     }
 
-    this.pipeline = new DefaultRenderingPipeline('pipe', true, this.scene, [this.camera]);
-    this.pipeline.fxaaEnabled = true;
-    this.pipeline.samples = this.coarsePointer ? 1 : 4;
-    this.pipeline.bloomEnabled = true;
-    this.pipeline.bloomThreshold = 0.72;
-    this.pipeline.bloomWeight = 0.09;
-    this.pipeline.bloomKernel = this.coarsePointer ? 12 : 24;
-    this.pipeline.bloomScale = 1.0;
-    this.pipeline.sharpenEnabled = !this.coarsePointer;
-    this.pipeline.sharpen.edgeAmount = 0.22;
-    this.pipeline.sharpen.colorAmount = 1;
-    this.pipeline.imageProcessing.toneMappingEnabled = true;
-    this.pipeline.imageProcessing.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
-    this.pipeline.imageProcessing.contrast = this.tone.contrast;
-    this.pipeline.imageProcessing.exposure = this.tone.exposure;
-    this.pipeline.imageProcessing.ditheringEnabled = true;
-    this.pipeline.imageProcessing.ditheringIntensity = 0.04;
-    this.pipeline.imageProcessing.vignetteEnabled = true;
-    this.pipeline.imageProcessing.vignetteWeight = this.tone.ipVignette;
-    this.pipeline.imageProcessing.vignetteColor = new Color4(0.0, 0.0, 0.03, 0);
-    this.pipeline.grainEnabled = true;
-    this.pipeline.grain.intensity = this.coarsePointer ? 3 : 5;
-    this.pipeline.grain.animated = !this.coarsePointer;
-    this.pipeline.chromaticAberrationEnabled = true;
-    this.pipeline.chromaticAberration.aberrationAmount = this.coarsePointer ? 3 : 5;
-    this.pipeline.chromaticAberration.radialIntensity = 0.25;
+    this.pipeline = this.buildPipeline();
+    this.vhs = this.buildVhs();
 
-    this.vhs = new PostProcess(
+    this.attachEvents();
+    this.updateViewport();
+    this.optimizeStaticGeometry();
+    this.pruneShadowCasters();
+    this.applyQualityLevel(this.qualityLevel);
+    if (this.normalPending === 0) {
+      this.resolveNormalMaps?.();
+    }
+    this.engine.runRenderLoop(() => this.render());
+  }
+
+  private buildPipeline(): DefaultRenderingPipeline {
+    const pipeline = new DefaultRenderingPipeline('pipe', true, this.scene, [this.camera]);
+    pipeline.fxaaEnabled = true;
+    pipeline.samples = this.coarsePointer ? 1 : 2;
+    pipeline.bloomEnabled = true;
+    pipeline.bloomThreshold = 0.72;
+    pipeline.bloomWeight = 0.09;
+    pipeline.bloomKernel = this.coarsePointer ? 12 : 24;
+    pipeline.bloomScale = 1.0;
+    pipeline.sharpenEnabled = !this.coarsePointer;
+    pipeline.sharpen.edgeAmount = 0.22;
+    pipeline.sharpen.colorAmount = 1;
+    pipeline.imageProcessing.toneMappingEnabled = true;
+    pipeline.imageProcessing.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
+    pipeline.imageProcessing.contrast = this.tone.contrast;
+    pipeline.imageProcessing.exposure = this.tone.exposure;
+    pipeline.imageProcessing.ditheringEnabled = true;
+    pipeline.imageProcessing.ditheringIntensity = 0.04;
+    pipeline.imageProcessing.vignetteEnabled = true;
+    pipeline.imageProcessing.vignetteWeight = this.tone.ipVignette;
+    pipeline.imageProcessing.vignetteColor = new Color4(0.0, 0.0, 0.03, 0);
+    // grain y aberración cromática viven en el shader VHS (un solo pase)
+    pipeline.grainEnabled = false;
+    pipeline.chromaticAberrationEnabled = false;
+    return pipeline;
+  }
+
+  private buildVhs(): PostProcess {
+    const vhs = new PostProcess(
       'vhs',
       VHS_SHADER_NAME,
       ['uTime', 'uVhs', 'uVignette', 'uResolution', 'uLift'],
@@ -443,22 +509,14 @@ export class RoomScene {
       this.engine,
       false,
     );
-    this.vhs.onApply = (effect) => {
+    vhs.onApply = (effect) => {
       effect.setFloat('uTime', this.elapsed);
       effect.setFloat('uVhs', this.vhsValue);
       effect.setFloat('uVignette', this.tone.vhsVignette);
       effect.setFloat('uLift', this.tone.lift);
       effect.setVector2('uResolution', new Vector2(this.engine.getRenderWidth(), this.engine.getRenderHeight()));
     };
-
-    this.attachEvents();
-    this.updateViewport();
-    if (this.coarsePointer) {
-      // arranca ya recortado en dispositivos de baja capacidad
-      this.stepDownQuality();
-    }
-    this.optimizeStaticGeometry();
-    this.engine.runRenderLoop(() => this.render());
+    return vhs;
   }
 
   private static readonly BASE_FOV = (52 * Math.PI) / 180;
@@ -493,8 +551,18 @@ export class RoomScene {
         }
         return (performance.now() - t0) / frames;
       };
+      // los normal maps se generan en un worker: esperarlos para que el
+      // recompilado con BUMPMAP ocurra durante el calentamiento
+      await Promise.race([
+        this.normalMapsReady,
+        new Promise<void>((resolve) => setTimeout(resolve, 4000)),
+      ]);
       await Promise.resolve();
-      const frameBudget = 1000 / 30;
+      // la escena puede haberse destruido mientras esperábamos al worker
+      if (this.disposed) {
+        return;
+      }
+      const frameBudget = 1000 / 40;
       // calentamiento (compila shaders, sube texturas): no se mide
       measure(8);
       for (let i = 0; i < loops; i++) {
@@ -502,7 +570,7 @@ export class RoomScene {
         if (ms <= frameBudget) {
           break;
         }
-        this.stepDownQuality();
+        this.applyQualityLevel(this.qualityLevel - 1);
       }
     } catch (error) {
       console.warn('Calibración de rendimiento omitida:', error);
@@ -685,7 +753,7 @@ export class RoomScene {
       mat.emissiveIntensity = 0.42;
       mat.metallic = 0.72;
       mat.roughness = 0.34;
-      mat.maxSimultaneousLights = 6;
+      mat.maxSimultaneousLights = 8;
       const tex = this.texture(discCanvas(project.title, project.accent));
       mat.albedoTexture = tex;
       mat.emissiveTexture = tex;
@@ -764,6 +832,9 @@ export class RoomScene {
 
   dispose(): void {
     this.disposed = true;
+    this.normalWorker?.terminate();
+    this.normalWorker = undefined;
+    this.resolveNormalMaps?.();
     this.detachEvents();
     this.detachConsoleKeys();
     this.engine.stopRenderLoop();
@@ -794,7 +865,7 @@ export class RoomScene {
   }
 
   private sampleFps(dt: number): void {
-    if (this.disposed || this.extremeQuality) {
+    if (this.disposed) {
       return;
     }
     this.fpsFrames += 1;
@@ -809,76 +880,210 @@ export class RoomScene {
     if (frames < 2 || this.elapsed < 3) {
       return;
     }
-    const now = performance.now ? performance.now() : Date.now();
-    if (now - this.lastDown < 2500) {
-      return;
-    }
-    if (fps < 34) {
+    const now = performance.now();
+    if (fps < 38) {
+      this.aboveCount = 0;
       this.belowCount++;
-      if (this.belowCount >= 2) {
-        this.stepDownQuality();
+      if (this.belowCount >= 2 && this.qualityLevel > 0 && now - this.lastChange >= 3000) {
+        this.applyQualityLevel(this.qualityLevel - 1);
+        this.lastChange = now;
         this.belowCount = 0;
-        this.lastDown = now;
       }
       return;
     }
     this.belowCount = 0;
+    if (fps > 52 && this.elapsed > 6 && this.qualityLevel < this.qualityCeiling && now - this.lastChange >= 10000) {
+      this.aboveCount++;
+      if (this.aboveCount >= 2) {
+        this.applyQualityLevel(this.qualityLevel + 1);
+        this.lastChange = now;
+        this.aboveCount = 0;
+      }
+    } else if (fps <= 52) {
+      this.aboveCount = 0;
+    }
   }
 
-  private stepDownQuality(): void {
-    if (this.extremeQuality) {
+  private static readonly RESOLUTION_SCALE: Record<number, number> = { 4: 1, 3: 1, 2: 0.9, 1: 0.8, 0: 0.62 };
+
+  private applyResolution(): void {
+    const dpr = window.devicePixelRatio || 1;
+    const scale = RoomScene.RESOLUTION_SCALE[Math.max(0, Math.min(4, this.qualityLevel))] ?? 1;
+    this.engine.setHardwareScalingLevel(1 / (Math.min(dpr, 1.5) * scale));
+  }
+
+  /**
+   * Aplica un nivel de calidad (0 = extremo ... 4 = completo) de forma
+   * idempotente e invertible: subir restaura todo lo que bajar apagó.
+   */
+  private applyQualityLevel(level: number): void {
+    const next = Math.max(0, Math.min(4, level));
+    if (this.qualityApplied && next === this.qualityLevel) {
       return;
     }
-    if (this.qualityLevel <= 0) {
-      this.applyExtremeQuality();
-      return;
+    this.qualityLevel = next;
+    this.qualityApplied = true;
+    const coarse = this.coarsePointer;
+
+    if (next >= 4 && !coarse) {
+      this.ensureSsao();
+    } else {
+      const hadSsao = !!this.ssao;
+      this.disposeSsao();
+      if (hadSsao) {
+        // quitar SSAO desplaza los índices de la cadena de PPs:
+        // reconstruir pipe + vhs reancla el orden correcto
+        this.rebuildPostChain();
+      }
     }
-    this.qualityLevel--;
+    // leer después de un posible rebuildPostChain
     const p = this.pipeline;
-    if (this.qualityLevel === 2) {
-      // 1) MSAA (el mas caro en movil/desktop)
-      p.samples = 1;
-      // 2) SSAO (caro, poco visible de noche)
-      if (this.ssao) {
-        try { this.ssao.dispose(); } catch {}
-        this.ssao = undefined;
-      }
-      // 3) bloom mas barato pero sin quitarlo (mantiene el look)
-      if (p.bloomEnabled) {
-        p.bloomKernel = Math.min(p.bloomKernel, 12);
-        p.bloomWeight = Math.min(p.bloomWeight, 0.05);
-      }
-      if (this.glow) {
-        try {
-          this.glow.blurKernelSize = Math.min(this.glow.blurKernelSize, 20);
-          (this.glow as any).mainTextureRatio = Math.min((this.glow as any).mainTextureRatio || 0.4, 0.3);
-        } catch {}
-      }
-    } else if (this.qualityLevel === 1) {
-      // 4) glow tenue (no se elimina: aporta la vibra)
-      try {
-        this.glow.intensity = 0.18;
-        this.glow.blurKernelSize = 16;
-        (this.glow as any).mainTextureRatio = 0.22;
-      } catch {}
-      // 5) sombras fuera
-      if (this.shadow) {
-        try { this.shadow.dispose(); } catch {}
-        this.shadow = undefined;
-        this.scene.shadowsEnabled = false;
-      }
-      // 6) primer recorte de resolucion (el mas efectivo)
-      const dpr = window.devicePixelRatio || 1;
-      const base = this.coarsePointer ? 1.5 : Math.min(dpr, 1.8);
-      this.engine.setHardwareScalingLevel(1 / Math.max(0.9, base * 0.85));
-    } else if (this.qualityLevel === 0) {
-      this.applyLowQuality();
+
+    p.samples = coarse || next < 4 ? 1 : 2;
+    p.bloomEnabled = next >= 2;
+    if (p.bloomEnabled) {
+      p.bloomKernel = next >= 3 && !coarse ? 24 : 12;
+      p.bloomWeight = next >= 4 ? 0.09 : 0.05;
     }
+    p.sharpenEnabled = !coarse && next >= 2;
+
+    if (next >= 3) {
+      this.glow.isEnabled = true;
+      this.glow.intensity = 0.35;
+      this.glow.blurKernelSize = coarse ? 16 : next >= 4 ? 32 : 20;
+      (this.glow as any).mainTextureRatio = coarse ? 0.25 : next >= 4 ? 0.5 : 0.3;
+    } else if (next === 2) {
+      this.glow.isEnabled = true;
+      this.glow.intensity = 0.18;
+      this.glow.blurKernelSize = 16;
+      (this.glow as any).mainTextureRatio = 0.22;
+    } else {
+      this.glow.isEnabled = false;
+    }
+
+    if (next >= 3) {
+      this.ensureShadows();
+    } else {
+      this.disposeShadows();
+    }
+
+    if (next >= 1 && !this.vhsAttached) {
+      this.camera.attachPostProcess(this.vhs);
+      this.vhsAttached = true;
+    } else if (next < 1 && this.vhsAttached) {
+      this.camera.detachPostProcess(this.vhs);
+      this.vhsAttached = false;
+    }
+
+    this.scene.environmentIntensity = next >= 2 ? this.tone.env : next >= 1 ? this.tone.env * 0.7 : 0.4;
+    const aniso = next >= 1 ? 4 : 1;
+    for (const tex of this.scene.textures) {
+      tex.anisotropicFilteringLevel = aniso;
+    }
+
+    this.applyResolution();
+  }
+
+  private ensureSsao(): void {
+    if (this.ssao || this.coarsePointer) {
+      return;
+    }
+    try {
+      if (!SSAO2RenderingPipeline.IsSupported) {
+        return;
+      }
+      const ssao = new SSAO2RenderingPipeline('ssao2', this.scene, { ssaoRatio: 0.5, blurRatio: 1 }, [this.camera]);
+      ssao.radius = 0.8;
+      ssao.totalStrength = 0.9;
+      ssao.maxZ = 25;
+      ssao.bilateralSoften = 0.5;
+      this.ssao = ssao;
+      if (this.pipeline) {
+        // los PPs de SSAO se enganchan al final: reconstruir la cadena
+        // restaura el orden ssao -> pipeline -> vhs
+        this.rebuildPostChain();
+      }
+    } catch (error) {
+      console.warn('SSAO no disponible:', error);
+    }
+  }
+
+  private disposeSsao(): void {
+    if (!this.ssao) {
+      return;
+    }
+    try {
+      this.ssao.dispose();
+    } catch {}
+    this.ssao = undefined;
+  }
+
+  private ensureShadows(): void {
+    if (this.shadow || !this.moon) {
+      return;
+    }
+    const shadow = new ShadowGenerator(1024, this.moon);
+    shadow.useBlurExponentialShadowMap = true;
+    shadow.blurKernel = this.coarsePointer ? 12 : 16;
+    shadow.darkness = this.tone.shadowDarkness;
+    if (shadow.getShadowMap()) {
+      shadow.getShadowMap()!.refreshRate = this.coarsePointer ? 24 : 12;
+    }
+    for (const caster of this.shadowCasters ?? []) {
+      if (!caster.isDisposed()) {
+        shadow.addShadowCaster(caster);
+      }
+    }
+    this.shadow = shadow;
+    this.scene.shadowsEnabled = true;
+  }
+
+  private disposeShadows(): void {
+    if (!this.shadow) {
+      return;
+    }
+    this.shadowCasters = (this.shadow.getShadowMap()?.renderList ?? []).filter((mesh: AbstractMesh) => !mesh.isDisposed());
+    try {
+      this.shadow.dispose();
+    } catch {}
+    this.shadow = undefined;
+    this.scene.shadowsEnabled = false;
+  }
+
+  private rebuildPostChain(): void {
+    try {
+      this.pipeline?.dispose();
+    } catch {}
+    try {
+      this.vhs?.dispose();
+    } catch {}
+    this.pipeline = this.buildPipeline();
+    this.vhs = this.buildVhs();
+    this.vhsAttached = true;
   }
 
   private optimizeStaticGeometry(): void {
     this.mergeStaticMeshes();
     this.freezeStaticMatrices();
+  }
+
+  /** Tras el merge, olvida casters disposed y micro-objetos cuya sombra no se ve. */
+  private pruneShadowCasters(): void {
+    const renderList = this.shadow?.getShadowMap()?.renderList;
+    if (!this.shadow || !renderList) {
+      return;
+    }
+    for (const caster of renderList.slice()) {
+      if (caster.isDisposed()) {
+        this.shadow.removeShadowCaster(caster);
+        continue;
+      }
+      const extend = caster.getBoundingInfo().boundingBox.extendSizeWorld;
+      if (extend.length() * 2 < 0.3) {
+        this.shadow.removeShadowCaster(caster);
+      }
+    }
+    this.shadowCasters = (this.shadow.getShadowMap()?.renderList ?? []).slice();
   }
 
   private collectAnimatedNodes(): Set<TransformNode | Mesh> {
@@ -971,58 +1176,6 @@ export class RoomScene {
     }
   }
 
-  private applyLowQuality(): void {
-    if (this.lowQuality) {
-      return;
-    }
-    this.lowQuality = true;
-    if (this.ssao) {
-      this.ssao.dispose();
-      this.ssao = undefined;
-    }
-    // recorta shaders por completo: aqui prima el rendimiento
-    this.pipeline.samples = 1;
-    this.pipeline.sharpenEnabled = false;
-    this.pipeline.bloomEnabled = false;
-    this.pipeline.grainEnabled = false;
-    this.pipeline.chromaticAberrationEnabled = false;
-    this.camera.detachPostProcess(this.vhs);
-    if (this.glow) {
-      this.glow.isEnabled = false;
-    }
-    if (this.shadow) {
-      this.shadow.mapSize = 512;
-      this.shadow.blurKernel = 8;
-      const map = this.shadow.getShadowMap();
-      if (map) {
-        map.refreshRate = 12;
-      }
-    }
-    const dpr = window.devicePixelRatio || 1;
-    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 0.7 : 0.85));
-  }
-
-  private applyExtremeQuality(): void {
-    if (this.extremeQuality) {
-      return;
-    }
-    this.extremeQuality = true;
-    this.applyLowQuality();
-    // ultimo recurso: prioriza fps sobre todo lo demas
-    if (this.shadow) {
-      this.scene.shadowsEnabled = false;
-    }
-    this.scene.environmentIntensity = 0.35;
-    for (const mat of this.scene.materials) {
-      const anyMat = mat as unknown as { anisotropicFilteringLevel?: number };
-      if (typeof anyMat.anisotropicFilteringLevel === 'number') {
-        anyMat.anisotropicFilteringLevel = 1;
-      }
-    }
-    const dpr = window.devicePixelRatio || 1;
-    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 0.55 : 0.7));
-  }
-
   private updateCamera(dt: number): void {
     if (this.transition) {
       this.transition.elapsed += dt;
@@ -1099,7 +1252,7 @@ export class RoomScene {
     if (flipV) dt.vOffset = 1;
     dt.wrapU = Texture.WRAP_ADDRESSMODE;
     dt.wrapV = Texture.WRAP_ADDRESSMODE;
-    dt.anisotropicFilteringLevel = this.coarsePointer ? 4 : 16;
+    dt.anisotropicFilteringLevel = 4;
     if (linear) {
       dt.gammaSpace = false;
     }
@@ -1142,12 +1295,75 @@ export class RoomScene {
     mat.metallic = 0;
     mat.roughness = 1;
     mat.backFaceCulling = true;
-    mat.maxSimultaneousLights = 6;
+    mat.maxSimultaneousLights = 8;
     plane.material = mat;
   }
 
   private bump(mat: PBRMaterial, source: HTMLCanvasElement, uScale = 1, vScale = 1, strength = 2): void {
-    mat.bumpTexture = this.texture(heightToNormal(source, strength), uScale, vScale, true);
+    const ctx = source.getContext('2d');
+    if (!this.normalWorker || !ctx) {
+      mat.bumpTexture = this.texture(heightToNormal(source, strength), uScale, vScale, true);
+      return;
+    }
+    const id = this.normalCounter++;
+    this.normalPending++;
+    this.normalJobs.set(id, { mat, uScale, vScale, source, strength });
+    const image = ctx.getImageData(0, 0, source.width, source.height);
+    this.normalWorker.postMessage({
+      id,
+      width: source.width,
+      height: source.height,
+      strength,
+      data: image.data,
+    });
+  }
+
+  private initNormalWorker(): void {
+    try {
+      const worker = new Worker(new URL('./normal-map.worker', import.meta.url), { type: 'module' });
+      worker.onmessage = (event: MessageEvent) => this.onNormalMapResult(event.data);
+      worker.onerror = () => this.fallbackNormalJobs();
+      this.normalWorker = worker;
+    } catch (error) {
+      console.warn('Worker de normal maps no disponible, se calcula en main thread:', error);
+      this.normalWorker = undefined;
+    }
+  }
+
+  private onNormalMapResult(data: { id: number; width: number; height: number; data: Uint8ClampedArray<ArrayBuffer> }): void {
+    const job = this.normalJobs.get(data.id);
+    if (!job || this.disposed) {
+      return;
+    }
+    this.normalJobs.delete(data.id);
+    const canvas = document.createElement('canvas');
+    canvas.width = data.width;
+    canvas.height = data.height;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.putImageData(new ImageData(data.data, data.width, data.height), 0, 0);
+      job.mat.bumpTexture = this.texture(canvas, job.uScale, job.vScale, true);
+    }
+    this.normalPending--;
+    if (this.normalPending <= 0) {
+      this.resolveNormalMaps?.();
+    }
+  }
+
+  private fallbackNormalJobs(): void {
+    if (!this.normalJobs.size) {
+      this.normalWorker = undefined;
+      this.resolveNormalMaps?.();
+      return;
+    }
+    console.warn('Worker de normal maps falló, se completa en main thread.');
+    this.normalWorker = undefined;
+    for (const job of this.normalJobs.values()) {
+      job.mat.bumpTexture = this.texture(heightToNormal(job.source, job.strength), job.uScale, job.vScale, true);
+    }
+    this.normalJobs.clear();
+    this.normalPending = 0;
+    this.resolveNormalMaps?.();
   }
 
   private pbr(
@@ -1164,7 +1380,7 @@ export class RoomScene {
     mat.albedoColor = hex(color);
     mat.metallic = opts.metallic ?? 0.05;
     mat.roughness = opts.roughness ?? 0.78;
-    mat.maxSimultaneousLights = 6;
+    mat.maxSimultaneousLights = 8;
     if (opts.emissive) {
       mat.emissiveColor = opts.emissive;
       mat.emissiveIntensity = opts.emissiveIntensity ?? 1;
@@ -1185,7 +1401,7 @@ export class RoomScene {
     mat.emissiveIntensity = intensity;
     mat.metallic = 0;
     mat.roughness = 1;
-    mat.maxSimultaneousLights = 6;
+    mat.maxSimultaneousLights = 8;
     this.materialCache.set(key, mat);
     return mat;
   }
@@ -1433,6 +1649,7 @@ export class RoomScene {
       light.diffuse = hex('#ffc9a0');
       light.intensity = 5;
       light.range = 6;
+      this.localLights.push(light);
     });
 
     const metal = this.pbr('elevMetal', '#9aa2ae', { roughness: 0.32, metallic: 0.9 });
@@ -1452,6 +1669,7 @@ export class RoomScene {
     cabinLight.diffuse = hex('#dfe8ff');
     cabinLight.intensity = 3.5;
     cabinLight.range = 4.5;
+    this.localLights.push(cabinLight);
 
     const elevDoorMat = this.pbr('elevDoorMat', '#aab0bc', { roughness: 0.28, metallic: 0.95 });
     const left = this.box('elevDoorL', { w: 1.06, h: 2.3, d: 0.06 }, new Vector3(0, 1.15, 7.48), elevDoorMat);
@@ -1536,7 +1754,7 @@ export class RoomScene {
     termScreenMat.emissiveIntensity = 1.55;
     termScreenMat.metallic = 0;
     termScreenMat.roughness = 1;
-    termScreenMat.maxSimultaneousLights = 6;
+    termScreenMat.maxSimultaneousLights = 8;
     termScreenMat.clearCoat.isEnabled = true;
     termScreenMat.clearCoat.intensity = 0.8;
     termScreenMat.clearCoat.roughness = 0.12;
@@ -1548,7 +1766,7 @@ export class RoomScene {
     outScreenMat.emissiveIntensity = 1.45;
     outScreenMat.metallic = 0;
     outScreenMat.roughness = 1;
-    outScreenMat.maxSimultaneousLights = 6;
+    outScreenMat.maxSimultaneousLights = 8;
     outScreenMat.clearCoat.isEnabled = true;
     outScreenMat.clearCoat.intensity = 0.8;
     outScreenMat.clearCoat.roughness = 0.12;
@@ -1670,6 +1888,7 @@ export class RoomScene {
     lampLight.diffuse = hex('#ffc88a');
     lampLight.intensity = 6;
     lampLight.position = new Vector3(-0.95, 1.2, -3.45);
+    this.localLights.push(lampLight);
 
     const postitColors = ['#ffd166', '#ef476f', '#06d6a0'];
     const postits: Mesh[] = [];
@@ -1761,6 +1980,16 @@ export class RoomScene {
       board.bakeCurrentTransformIntoVertices();
       board.parent = shelf;
       pickables.push(board);
+      if (i > 0) {
+        // tira LED bajo cada balda: cara visible + ligeras
+        const strip = this.box(
+          'shelfStrip' + i,
+          { w: 0.025, h: 0.014, d: 1.9 },
+          new Vector3(x + 0.22, y - 0.042, -1.4),
+          this.emissive('shelfStripMat', hex('#ffd9b0'), 1.3),
+        );
+        strip.parent = shelf;
+      }
     });
     this.box('shelfBack', { w: 0.08, h: 2.5, d: 2.3 }, new Vector3(x - 0.2, 1.35, -1.4), this.pbr('shelfBackMat', '#241a30', { roughness: 0.8 })).parent = shelf;
 
@@ -1902,7 +2131,7 @@ export class RoomScene {
     screenMat.emissiveIntensity = 1.25;
     screenMat.metallic = 0;
     screenMat.roughness = 1;
-    screenMat.maxSimultaneousLights = 6;
+    screenMat.maxSimultaneousLights = 8;
     screenMat.clearCoat.isEnabled = true;
     screenMat.clearCoat.intensity = 1;
     screenMat.clearCoat.roughness = 0.1;
@@ -1944,6 +2173,7 @@ export class RoomScene {
     tvLight.diffuse = NEON_CYAN;
     tvLight.intensity = 2.5;
     tvLight.range = 4.5;
+    this.localLights.push(tvLight);
 
     tvPickables.forEach((mesh) => {
       mesh.metadata = { hotspotId: 'tv' as HotspotId };
@@ -2098,11 +2328,13 @@ export class RoomScene {
     ledLight.diffuse = NEON_PINK;
     ledLight.intensity = 5;
     ledLight.range = 8;
+    this.localLights.push(ledLight);
 
     const neonLight = new PointLight('neonPt', new Vector3(2.1, 2.1, -3.3), this.scene);
     neonLight.diffuse = NEON_PURPLE;
     neonLight.intensity = 6;
     neonLight.range = 8;
+    this.localLights.push(neonLight);
 
     const fairyWarm = this.emissive('fairyWarmMat', hex('#ffd6a0'), 1.5);
     const fairyCool = this.emissive('fairyCoolMat', NEON_CYAN, 1.5);
@@ -2201,29 +2433,52 @@ export class RoomScene {
     fwLight.diffuse = hex('#57c98a');
     fwLight.intensity = 1.6;
     fwLight.range = 3.5;
+    this.localLights.push(fwLight);
   }
 
-  private buildLights(): void {
+  /** Globales sin scoping: siempre en los primeros slots de cada material. */
+  private buildBaseLights(): void {
     const hemi = new HemisphericLight('hemi', new Vector3(0, 1, 0), this.scene);
     hemi.intensity = this.tone.hemi;
     hemi.diffuse = hex('#8899ff');
-    hemi.groundColor = hex('#101a2e');
+    hemi.groundColor = hex('#26334e');
 
     const moon = new DirectionalLight('moon', new Vector3(-0.45, -1, -0.55), this.scene);
     moon.position = new Vector3(9, 15, 8);
     moon.intensity = this.tone.moon;
     moon.diffuse = hex('#bcd0ff');
+    this.moon = moon;
 
     const fill = new DirectionalLight('fill', new Vector3(0.4, -0.65, -0.65), this.scene);
     fill.intensity = this.tone.fill;
     fill.diffuse = hex('#9db4ff');
 
-    const shadow = new ShadowGenerator(this.coarsePointer ? 1024 : 2048, moon);
+    const ceil = new PointLight('ceil', new Vector3(0, 2.5, -1), this.scene);
+    ceil.diffuse = hex('#ffd9b0');
+    ceil.intensity = 9.5;
+    ceil.range = 13;
+
+    // acento cálido para la estantería (zona más oscura de la habitación)
+    // shelfPt ilumina las filas de abajo/medio; shelfTopPt la fila alta
+    const shelfLight = new PointLight('shelfPt', new Vector3(-3.3, 1.55, -1.4), this.scene);
+    shelfLight.diffuse = hex('#ffd9b0');
+    shelfLight.intensity = 4;
+    shelfLight.range = 5.5;
+    const shelfTopPt = new PointLight('shelfTopPt', new Vector3(-3.15, 2.95, -1.4), this.scene);
+    shelfTopPt.diffuse = hex('#ffd9b0');
+    shelfTopPt.intensity = 3.5;
+    shelfTopPt.range = 6;
+  }
+
+  private buildLights(): void {
+    const moon = this.moon!;
+
+    const shadow = new ShadowGenerator(1024, moon);
     shadow.useBlurExponentialShadowMap = true;
-    shadow.blurKernel = this.coarsePointer ? 12 : 24;
+    shadow.blurKernel = this.coarsePointer ? 12 : 16;
     shadow.darkness = this.tone.shadowDarkness;
     if (shadow.getShadowMap()) {
-      shadow.getShadowMap()!.refreshRate = this.coarsePointer ? 12 : 6;
+      shadow.getShadowMap()!.refreshRate = this.coarsePointer ? 24 : 12;
     }
     this.shadow = shadow;
 
@@ -2239,14 +2494,26 @@ export class RoomScene {
       }
     });
 
-    const ceil = new PointLight('ceil', new Vector3(0, 2.5, -1), this.scene);
-    ceil.diffuse = hex('#ffd9b0');
-    ceil.intensity = 6;
-    ceil.range = 9;
-
     const ceilBulb = CreateSphere('ceilBulb', { diameter: 0.18, segments: 12 }, this.scene);
     ceilBulb.position = new Vector3(0, 2.55, -1);
     ceilBulb.material = this.emissive('ceilBulbMat', hex('#fff0d0'), 1.2);
+
+    // acota cada luz local a los meshes de su zona: sin esto ocupan slots
+    // del cupo de 6 luces y apagan (literalmente) luces globales en lejanos
+    for (const light of this.localLights) {
+      const radius = Math.min(light.range || 6, 5);
+      const only: AbstractMesh[] = [];
+      for (const mesh of this.scene.meshes) {
+        if (mesh.name === 'sky' || mesh.getTotalVertices() === 0) {
+          continue;
+        }
+        const center = mesh.getBoundingInfo().boundingBox.centerWorld;
+        if (Vector3.Distance(center, light.position) <= radius) {
+          only.push(mesh);
+        }
+      }
+      light.includedOnlyMeshes = only;
+    }
   }
 
   private attachEvents(): void {

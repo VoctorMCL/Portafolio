@@ -15,7 +15,7 @@ import { LoadingService } from '../loading.service';
 import { InfoPanel, PanelSection } from '../ui/info-panel/info-panel';
 import { DiscProject, getProjects } from '../data/github';
 import { ROOM_CONTENT } from '../data/portfolio';
-import { HoverInfo, HotspotId, PanelId, RoomScene, ScenePhase, ViewId } from './room-scene';
+import { HoverInfo, HotspotId, PanelId, RoomScene, RoomSceneCallbacks, ScenePhase, ViewId } from './room-scene';
 import { CONSOLE_COMMANDS, CONSOLE_PROMPT } from './console-engine';
 import type { ConsoleLine } from './console-engine';
 import { loadSkillLogos } from './textures';
@@ -109,7 +109,7 @@ export class Room implements OnDestroy {
       void (async () => {
         try {
           await loadSkillLogos();
-          const scene = new RoomScene(this.canvasRef().nativeElement, {
+          const callbacks: RoomSceneCallbacks = {
             onHover: (info) => this.hover.set(info),
             onSelect: (id) => this.openSection(id),
             onDiscSelect: (project) => this.disc.set(project),
@@ -117,7 +117,15 @@ export class Room implements OnDestroy {
             onConsole: (open) => this.onConsoleChange(open),
             onConsoleOutput: () => this.syncConsoleOutput(),
             onMedia: (open) => this.onMediaChange(open),
-          });
+          };
+          const canvas = this.canvasRef().nativeElement;
+          let scene: RoomScene;
+          try {
+            scene = await RoomScene.create(canvas, callbacks);
+          } catch (error) {
+            console.warn('WebGPU falló, se reintenta con WebGL:', error);
+            scene = await RoomScene.create(canvas, callbacks, true);
+          }
           this.scene = scene;
           scene.setKeyboardEnabled(!this.compactNav());
           if (this.loadingService.visible()) {
