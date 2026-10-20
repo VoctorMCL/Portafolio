@@ -286,7 +286,6 @@ export class RoomScene {
   private lowQuality = false;
   private fpsFrames = 0;
   private fpsTime = 0;
-  private slowWindows = 0;
   private qualityLevel = 3;
   private belowCount = 0;
   private lastDown = 0;
@@ -422,13 +421,13 @@ export class RoomScene {
     this.pipeline.imageProcessing.ditheringIntensity = 0.04;
     this.pipeline.imageProcessing.vignetteEnabled = true;
     this.pipeline.imageProcessing.vignetteWeight = this.tone.ipVignette;
-    this.pipeline.imageProcessing.vignetteColor = new Color4(0.02, 0.0, 0.07, 0);
+    this.pipeline.imageProcessing.vignetteColor = new Color4(0.0, 0.0, 0.03, 0);
     this.pipeline.grainEnabled = true;
     this.pipeline.grain.intensity = this.coarsePointer ? 3 : 5;
     this.pipeline.grain.animated = !this.coarsePointer;
     this.pipeline.chromaticAberrationEnabled = true;
-    this.pipeline.chromaticAberration.aberrationAmount = 12;
-    this.pipeline.chromaticAberration.radialIntensity = 0.4;
+    this.pipeline.chromaticAberration.aberrationAmount = this.coarsePointer ? 3 : 5;
+    this.pipeline.chromaticAberration.radialIntensity = 0.25;
 
     this.vhs = new PostProcess(
       'vhs',
@@ -451,6 +450,10 @@ export class RoomScene {
 
     this.attachEvents();
     this.updateViewport();
+    if (this.coarsePointer) {
+      // arranca ya recortado en dispositivos de baja capacidad
+      this.stepDownQuality();
+    }
     this.engine.runRenderLoop(() => this.render());
   }
 
@@ -874,23 +877,26 @@ export class RoomScene {
       this.ssao.dispose();
       this.ssao = undefined;
     }
+    // recorta shaders por completo: aqui prima el rendimiento
     this.pipeline.samples = 1;
     this.pipeline.sharpenEnabled = false;
-    this.pipeline.bloomKernel = 12;
-    this.pipeline.bloomWeight = 0.07;
-    this.pipeline.grain.animated = false;
-    this.pipeline.grain.intensity = 3;
-    this.glow.blurKernelSize = 16;
+    this.pipeline.bloomEnabled = false;
+    this.pipeline.grainEnabled = false;
+    this.pipeline.chromaticAberrationEnabled = false;
+    this.camera.detachPostProcess(this.vhs);
+    if (this.glow) {
+      this.glow.isEnabled = false;
+    }
     if (this.shadow) {
-      this.shadow.mapSize = 1024;
-      this.shadow.blurKernel = 12;
+      this.shadow.mapSize = 512;
+      this.shadow.blurKernel = 8;
       const map = this.shadow.getShadowMap();
       if (map) {
         map.refreshRate = 12;
       }
     }
     const dpr = window.devicePixelRatio || 1;
-    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 1.1 : 1.4));
+    this.engine.setHardwareScalingLevel(1 / Math.min(dpr, this.coarsePointer ? 0.85 : 1.1));
   }
 
   private updateCamera(dt: number): void {
@@ -2065,7 +2071,7 @@ export class RoomScene {
     const hemi = new HemisphericLight('hemi', new Vector3(0, 1, 0), this.scene);
     hemi.intensity = this.tone.hemi;
     hemi.diffuse = hex('#8899ff');
-    hemi.groundColor = hex('#2a1240');
+    hemi.groundColor = hex('#101a2e');
 
     const moon = new DirectionalLight('moon', new Vector3(-0.45, -1, -0.55), this.scene);
     moon.position = new Vector3(9, 15, 8);

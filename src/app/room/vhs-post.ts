@@ -40,10 +40,11 @@ void main() {
   col += grain * 0.005 * (0.15 + vhs);
 
   float lum = dot(col, vec3(0.299, 0.587, 0.114));
-  vec3 shadowTint = vec3(0.07, 0.03, 0.13);
-  vec3 hiTint = vec3(0.86, 0.95, 1.06);
-  col = mix(col + shadowTint * (1.0 - lum), col * hiTint, smoothstep(0.2, 0.9, lum));
-  col = mix(vec3(lum), col, 1.05);
+  // sombras frescas (azul), sin tinte magenta; luces neutras
+  vec3 shadowTint = vec3(-0.01, 0.0, 0.04);
+  vec3 hiTint = vec3(0.98, 1.0, 1.03);
+  col = mix(col + shadowTint * (1.0 - lum), col * hiTint, smoothstep(0.15, 0.85, lum));
+  col = mix(vec3(lum), col, 1.0);
   col += vec3(uLift);
 
   vec2 p = uv - 0.5;
