@@ -41,7 +41,7 @@ const LABEL_BY_HOTSPOT: Record<HotspotId, string> = {
   terminal: 'Consola',
 };
 
-const ROOM_VIEWS: ViewId[] = ['general', 'tv', 'shelf', 'desk', 'monitor1', 'monitor2'];
+const ROOM_VIEWS: ViewId[] = ['general', 'tv', 'shelf', 'monitor1', 'monitor2', 'desk'];
 
 const VIEW_LABEL: Record<ViewId, string> = {
   general: 'Vista general',
