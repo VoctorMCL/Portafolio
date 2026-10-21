@@ -765,7 +765,7 @@ export class RoomScene {
       return;
     }
     if (view === 'monitor1' || view === 'monitor2') {
-      this.openConsole(view === 'monitor1' ? MONITOR_TERM_POSE : MONITOR_OUT_POSE);
+      this.openConsole(view === 'monitor1' ? MONITOR_TERM_POSE : MONITOR_OUT_POSE, true);
       return;
     }
     this.focus(view);
@@ -3791,7 +3791,7 @@ export class RoomScene {
     return [...this.consoleHistory];
   }
 
-  openConsole(pose?: Pose): void {
+  openConsole(pose?: Pose, runHelp = false): void {
     if (this.consoleOpen) {
       if (pose) {
         this.goal = pose;
@@ -3811,6 +3811,9 @@ export class RoomScene {
     this.consoleEcho = this.consoleEcho.slice(-8);
     this.attachConsoleKeys();
     this.updateViewport();
+    if (runHelp) {
+      this.submitConsole('help');
+    }
     this.updateTermScreen();
     this.notifyConsole();
   }
@@ -3901,7 +3904,7 @@ export class RoomScene {
         return;
       }
       this.callbacks.onView?.(target.view);
-      this.openConsole(target.view === 'monitor1' ? MONITOR_TERM_POSE : MONITOR_OUT_POSE);
+      this.openConsole(target.view === 'monitor1' ? MONITOR_TERM_POSE : MONITOR_OUT_POSE, true);
       return;
     }
     if (target.kind === 'disc') {

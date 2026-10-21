@@ -214,11 +214,6 @@ export class Room implements OnDestroy {
     return LABEL_BY_HOTSPOT[info.id];
   }
 
-  protected openKeyboard(): void {
-    // toque directo sobre el botón: iOS solo abre el teclado con un gesto real
-    this.consoleInputRef()?.nativeElement.focus({ preventScroll: true });
-  }
-
   protected closeSection(): void {
     this.section.set(null);
     this.viewIndex.set(0);

@@ -275,30 +275,6 @@
   font-size: 16px;
 }
 
-.console-ghost__type {
-  position: absolute;
-  z-index: 41;
-  left: max(0.85rem, env(safe-area-inset-left, 0px));
-  bottom: calc(0.85rem + env(safe-area-inset-bottom, 0px));
-  height: 3rem;
-  padding: 0 1.15rem;
-  font: inherit;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: #eaf5ff;
-  background: rgba(20, 30, 50, 0.9);
-  border: 1px solid rgba(108, 208, 255, 0.4);
-  border-radius: 999px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.console-ghost__type:active {
-  transform: scale(0.96);
-}
-
 .console-ghost__close {
   position: absolute;
   z-index: 41;
