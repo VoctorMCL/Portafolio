@@ -309,11 +309,16 @@ export class Room implements OnDestroy {
     if (!this.compactNav()) {
       return;
     }
-    if (ROOM_VIEWS[this.viewIndex()] === 'monitor2') {
-      return;
-    }
     const field = this.consoleInputRef()?.nativeElement;
     if (!field) {
+      return;
+    }
+    if (ROOM_VIEWS[this.viewIndex()] === 'monitor2') {
+      if (document.activeElement === field) {
+        try {
+          field.blur();
+        } catch {}
+      }
       return;
     }
     if (document.activeElement === field) {
@@ -325,6 +330,9 @@ export class Room implements OnDestroy {
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => {
         if (ROOM_VIEWS[this.viewIndex()] === 'monitor2') {
+          try {
+            field.blur();
+          } catch {}
           return;
         }
         if (document.activeElement !== field) {
