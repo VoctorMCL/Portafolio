@@ -302,6 +302,10 @@ export class Room implements OnDestroy {
     if (!this.compactNav()) {
       return;
     }
+    // la pantalla de salida es solo de lectura: no abre teclado
+    if (ROOM_VIEWS[this.viewIndex()] === 'monitor2') {
+      return;
+    }
     // el foco debe caer dentro del gesto del usuario para que el teclado
     // nativo se abra en móvil; el input se crea tras el render reactivo,
     // así que se reintenta en el siguiente frame

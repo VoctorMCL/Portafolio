@@ -686,7 +686,7 @@ export class RoomScene {
       (this.goal === MONITOR_TERM_POSE || this.goal === MONITOR_OUT_POSE)
     ) {
       // móvil, vista de un monitor suelto: acerca un poco para leer el texto
-      this.viewScale = 0.82;
+      this.viewScale = 0.92;
     }
   }
 
@@ -3806,8 +3806,10 @@ export class RoomScene {
       if (pose) {
         this.goal = pose;
         this.updateViewport();
-        // toque en un monitor con la consola ya abierta: reabre el teclado
-        this.callbacks.onRequestKeyboard?.();
+        // solo la pantalla de entrada reabre el teclado; la de salida es de lectura
+        if (pose === MONITOR_TERM_POSE) {
+          this.callbacks.onRequestKeyboard?.();
+        }
       }
       return;
     }
