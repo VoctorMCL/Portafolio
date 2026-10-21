@@ -5,13 +5,15 @@ export interface DiscProject {
   title: string;
   summary: string;
   tech: string[];
-  repoUrl: string;
+  repoUrl?: string;
   demoUrl?: string;
   year: string;
   accent: string;
 }
 
 export const GITHUB_USER = 'VoctorMCL';
+
+const withProtocol = (url: string): string => (/^https?:\/\//i.test(url) ? url : `https://${url}`);
 
 const PALETTE = [
   '#39e0ff',
@@ -32,8 +34,8 @@ export function getProjects(): DiscProject[] {
     title: project.title,
     summary: project.summary,
     tech: project.tech,
-    repoUrl: project.repoUrl ?? `https://github.com/${GITHUB_USER}`,
-    demoUrl: project.demoUrl,
+    repoUrl: project.repoUrl ? withProtocol(project.repoUrl) : undefined,
+    demoUrl: project.demoUrl ? withProtocol(project.demoUrl) : undefined,
     year: project.year,
     accent: PALETTE[index % PALETTE.length],
   }));

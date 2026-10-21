@@ -29,7 +29,14 @@ export function woodCanvas(): HTMLCanvasElement {
     const y = Math.random() * 256;
     ctx.beginPath();
     ctx.moveTo(0, y);
-    ctx.bezierCurveTo(64, y + (Math.random() - 0.5) * 10, 192, y + (Math.random() - 0.5) * 10, 256, y + (Math.random() - 0.5) * 6);
+    ctx.bezierCurveTo(
+      64,
+      y + (Math.random() - 0.5) * 10,
+      192,
+      y + (Math.random() - 0.5) * 10,
+      256,
+      y + (Math.random() - 0.5) * 6,
+    );
     ctx.stroke();
   }
 
@@ -63,7 +70,14 @@ export function planksCanvas(): HTMLCanvasElement {
       const ly = y + Math.random() * plankH;
       ctx.beginPath();
       ctx.moveTo(0, ly);
-      ctx.bezierCurveTo(170, ly + (Math.random() - 0.5) * 8, 340, ly + (Math.random() - 0.5) * 8, 512, ly + (Math.random() - 0.5) * 5);
+      ctx.bezierCurveTo(
+        170,
+        ly + (Math.random() - 0.5) * 8,
+        340,
+        ly + (Math.random() - 0.5) * 8,
+        512,
+        ly + (Math.random() - 0.5) * 5,
+      );
       ctx.stroke();
     }
   }
@@ -149,6 +163,337 @@ export function posterCanvas(lines: string[], bg: string, fg: string): HTMLCanva
   return canvas;
 }
 
+export function faceCanvas(bg = '#ffd23f', fg = '#101014', size = 256): HTMLCanvasElement {
+  const { canvas, ctx } = surface(size, size);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, size, size);
+
+  const glow = ctx.createRadialGradient(
+    size * 0.42,
+    size * 0.36,
+    size * 0.06,
+    size * 0.5,
+    size * 0.5,
+    size * 0.62,
+  );
+  glow.addColorStop(0, 'rgba(255, 255, 255, 0.35)');
+  glow.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.fillStyle = fg;
+  const drawEye = (cx: number, cy: number, r: number) => {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+  };
+  drawEye(size * 0.34, size * 0.4, size * 0.062);
+  drawEye(size * 0.66, size * 0.4, size * 0.062);
+
+  ctx.strokeStyle = fg;
+  ctx.lineWidth = size * 0.05;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(size * 0.5, size * 0.52, size * 0.21, Math.PI * 0.16, Math.PI * 0.84);
+  ctx.stroke();
+
+  return canvas;
+}
+
+export function globeCanvas(): HTMLCanvasElement {
+  const W = 512;
+  const H = 256;
+  const { canvas, ctx } = surface(W, H);
+
+  const sea = ctx.createLinearGradient(0, 0, 0, H);
+  sea.addColorStop(0, '#0b2038');
+  sea.addColorStop(0.5, '#154a78');
+  sea.addColorStop(1, '#0b2038');
+  ctx.fillStyle = sea;
+  ctx.fillRect(0, 0, W, H);
+
+  let seed = 20260420;
+  const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const px = (lon: number) => ((lon + 180) / 360) * W;
+  const py = (lat: number) => ((90 - lat) / 180) * H;
+
+  const coast = (pts: [number, number][]) => {
+    const xy = pts.map(([lon, lat]) => [px(lon), py(lat)] as [number, number]);
+    const last = xy[xy.length - 1];
+    ctx.beginPath();
+    ctx.moveTo((last[0] + xy[0][0]) / 2, (last[1] + xy[0][1]) / 2);
+    for (let i = 0; i < xy.length; i++) {
+      const cur = xy[i];
+      const next = xy[(i + 1) % xy.length];
+      ctx.quadraticCurveTo(cur[0], cur[1], (cur[0] + next[0]) / 2, (cur[1] + next[1]) / 2);
+    }
+    ctx.closePath();
+  };
+
+  const land = (pts: [number, number][], fill: string) => {
+    const rough: [number, number][] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      rough.push(a);
+      rough.push([(a[0] + b[0]) / 2 + (rnd() - 0.5) * 4, (a[1] + b[1]) / 2 + (rnd() - 0.5) * 4]);
+    }
+    coast(rough);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(7, 34, 25, 0.6)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  };
+
+  land(
+    [
+      [-168, 65],
+      [-150, 70],
+      [-128, 70],
+      [-108, 72],
+      [-92, 70],
+      [-78, 67],
+      [-62, 60],
+      [-56, 50],
+      [-66, 44],
+      [-75, 36],
+      [-81, 25],
+      [-90, 29],
+      [-98, 26],
+      [-106, 22],
+      [-113, 30],
+      [-122, 34],
+      [-130, 48],
+      [-142, 56],
+      [-157, 58],
+    ],
+    '#4c7a42',
+  );
+  land(
+    [
+      [-56, 82],
+      [-40, 83],
+      [-22, 78],
+      [-26, 70],
+      [-42, 60],
+      [-55, 68],
+    ],
+    '#c8d8de',
+  );
+  land(
+    [
+      [-81, 10],
+      [-70, 12],
+      [-60, 9],
+      [-50, 0],
+      [-35, -6],
+      [-38, -20],
+      [-46, -23],
+      [-54, -34],
+      [-63, -41],
+      [-67, -51],
+      [-73, -54],
+      [-75, -45],
+      [-71, -30],
+      [-70, -18],
+      [-78, -6],
+      [-80, 2],
+    ],
+    '#4c7a42',
+  );
+  land(
+    [
+      [-17, 15],
+      [-10, 26],
+      [0, 32],
+      [10, 37],
+      [22, 32],
+      [32, 31],
+      [35, 22],
+      [43, 12],
+      [51, 12],
+      [42, -2],
+      [40, -12],
+      [35, -22],
+      [28, -33],
+      [18, -35],
+      [12, -20],
+      [8, -2],
+      [0, 5],
+      [-8, 5],
+    ],
+    '#4c7a42',
+  );
+  land(
+    [
+      [-10, 36],
+      [-9, 44],
+      [-2, 49],
+      [2, 52],
+      [5, 58],
+      [10, 64],
+      [20, 70],
+      [30, 71],
+      [40, 66],
+      [40, 56],
+      [30, 48],
+      [22, 40],
+      [14, 38],
+      [6, 36],
+    ],
+    '#4f7d45',
+  );
+  land(
+    [
+      [40, 66],
+      [55, 72],
+      [75, 76],
+      [100, 77],
+      [120, 74],
+      [140, 72],
+      [160, 70],
+      [172, 66],
+      [178, 62],
+      [170, 55],
+      [160, 52],
+      [150, 45],
+      [140, 40],
+      [130, 34],
+      [122, 30],
+      [118, 22],
+      [108, 20],
+      [100, 12],
+      [95, 6],
+      [88, 8],
+      [80, 8],
+      [72, 20],
+      [62, 25],
+      [55, 30],
+      [48, 38],
+      [42, 48],
+    ],
+    '#4c7a42',
+  );
+  land(
+    [
+      [113, -22],
+      [115, -33],
+      [125, -34],
+      [135, -35],
+      [145, -38],
+      [153, -30],
+      [153, -22],
+      [146, -15],
+      [138, -12],
+      [128, -14],
+      [118, -18],
+    ],
+    '#5f7d45',
+  );
+  land(
+    [
+      [-180, -71],
+      [-120, -74],
+      [-60, -69],
+      [0, -73],
+      [60, -69],
+      [120, -74],
+      [180, -71],
+      [180, -90],
+      [-180, -90],
+    ],
+    '#dfe9f2',
+  );
+
+  const patch = (pts: [number, number][], fill: string) => {
+    coast(pts);
+    ctx.fillStyle = fill;
+    ctx.fill();
+  };
+
+  patch(
+    [
+      [-14, 29],
+      [8, 31],
+      [30, 28],
+      [34, 18],
+      [16, 14],
+      [-4, 15],
+    ],
+    'rgba(203, 172, 112, 0.8)',
+  );
+  patch(
+    [
+      [38, 28],
+      [55, 27],
+      [53, 15],
+      [42, 13],
+    ],
+    'rgba(203, 172, 112, 0.8)',
+  );
+  patch(
+    [
+      [119, -21],
+      [141, -21],
+      [146, -29],
+      [134, -31],
+      [121, -27],
+    ],
+    'rgba(196, 166, 106, 0.75)',
+  );
+  patch(
+    [
+      [-75, 0],
+      [-58, 2],
+      [-48, -6],
+      [-60, -14],
+      [-72, -8],
+    ],
+    'rgba(104, 146, 74, 0.55)',
+  );
+  patch(
+    [
+      [8, 2],
+      [26, 2],
+      [28, -8],
+      [12, -10],
+    ],
+    'rgba(96, 138, 66, 0.5)',
+  );
+  patch(
+    [
+      [95, 60],
+      [135, 64],
+      [140, 52],
+      [102, 50],
+    ],
+    'rgba(96, 138, 66, 0.4)',
+  );
+
+  for (let i = 0; i < 30; i++) {
+    const lon = -180 + rnd() * 360;
+    const lat = -60 + rnd() * 120;
+    ctx.fillStyle = 'rgba(90, 128, 70, 0.7)';
+    ctx.beginPath();
+    ctx.ellipse(px(lon), py(lat), 1 + rnd() * 2.5, 1 + rnd() * 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const ice = ctx.createLinearGradient(0, 0, 0, py(72));
+  ice.addColorStop(0, 'rgba(226, 238, 246, 0.8)');
+  ice.addColorStop(1, 'rgba(226, 238, 246, 0)');
+  ctx.fillStyle = ice;
+  ctx.fillRect(0, 0, W, py(72));
+
+  for (let i = 0; i < 3200; i++) {
+    ctx.fillStyle = `rgba(255, 255, 255, ${Math.random() * 0.03})`;
+    ctx.fillRect(Math.random() * W, Math.random() * H, 1, 1);
+  }
+
+  return canvas;
+}
+
 export function screenCanvas(): HTMLCanvasElement {
   const { canvas, ctx } = surface(512, 320);
   ctx.fillStyle = '#020a14';
@@ -164,7 +509,7 @@ export function screenCanvas(): HTMLCanvasElement {
     { text: '> whoami', color: '#6cd0ff' },
     { text: '  victormcl', color: '#c8e6ff' },
     { text: '> ls proyectos/', color: '#6cd0ff' },
-    { text: '  simulador  rfid  campusclash', color: '#c8e6ff' },
+    { text: '  macollo  rfid  sisv', color: '#c8e6ff' },
     { text: '> status --now', color: '#6cd0ff' },
     { text: '  buscando ideas...', color: '#ff6bd0' },
   ];
@@ -237,8 +582,13 @@ export function discCanvas(label: string, accent: string): HTMLCanvasElement {
   ctx.textBaseline = 'middle';
   ctx.font = 'bold 22px monospace';
   const lines = wrapLines(ctx, label.toUpperCase(), 150).slice(0, 3);
-  const startY = c - ((lines.length - 1) * 24) / 2;
-  lines.forEach((line, i) => ctx.fillText(line, c, startY + i * 24));
+  // el disco es un cilindro girado: su UV va en vertical, así que el texto se dibuja girado 90°
+  ctx.save();
+  ctx.translate(c, c);
+  ctx.rotate(Math.PI / 2);
+  const startY = -((lines.length - 1) * 24) / 2;
+  lines.forEach((line, i) => ctx.fillText(line, 0, startY + i * 24));
+  ctx.restore();
 
   ctx.fillStyle = '#0b0b12';
   ctx.beginPath();
@@ -260,7 +610,7 @@ export function discScreenCanvas(project: {
   year: string;
   tech: string[];
   language?: string;
-  repoUrl: string;
+  repoUrl?: string;
   accent: string;
 }): HTMLCanvasElement {
   const { canvas, ctx } = surface(512, 384);
@@ -328,8 +678,10 @@ export function discScreenCanvas(project: {
 
   ctx.fillStyle = '#5d86ad';
   ctx.font = '14px monospace';
-  const url = project.repoUrl.replace(/^https?:\/\//, '');
-  ctx.fillText(url.length > 46 ? `${url.slice(0, 45)}…` : url, 40, 348);
+  const url = project.repoUrl?.replace(/^https?:\/\//, '');
+  if (url) {
+    ctx.fillText(url.length > 46 ? `${url.slice(0, 45)}…` : url, 40, 348);
+  }
 
   return canvas;
 }
@@ -343,7 +695,9 @@ export interface SkillLogo {
 
 const svgDataUri = (svg: string): string => {
   if (svg.startsWith('data:')) return svg;
-  const sized = /<svg[^>]*\swidth=/.test(svg) ? svg : svg.replace('<svg ', '<svg width="96" height="96" ');
+  const sized = /<svg[^>]*\swidth=/.test(svg)
+    ? svg
+    : svg.replace('<svg ', '<svg width="96" height="96" ');
   return `data:image/svg+xml,${encodeURIComponent(sized)}`;
 };
 
@@ -357,8 +711,18 @@ export async function loadSkillLogos(): Promise<SkillLogo[]> {
   if (skillLogosCache) return skillLogosCache;
   try {
     const res = await fetch('assets/skills-logos.json');
-    const list = (await res.json()) as { slug: string; label: string; color: string; svg: string }[];
-    skillLogosCache = list.map((s) => ({ slug: s.slug, label: s.label, color: s.color, src: svgDataUri(s.svg) }));
+    const list = (await res.json()) as {
+      slug: string;
+      label: string;
+      color: string;
+      svg: string;
+    }[];
+    skillLogosCache = list.map((s) => ({
+      slug: s.slug,
+      label: s.label,
+      color: s.color,
+      src: svgDataUri(s.svg),
+    }));
   } catch {
     skillLogosCache = [];
   }

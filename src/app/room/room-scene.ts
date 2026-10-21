@@ -23,8 +23,10 @@ import { SSAO2RenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipe
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { CreateSphere } from '@babylonjs/core/Meshes/Builders/sphereBuilder';
+import { CreateBox } from '@babylonjs/core/Meshes/Builders/boxBuilder';
 import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder';
 import { CreateTorus } from '@babylonjs/core/Meshes/Builders/torusBuilder';
 import { CreateGround } from '@babylonjs/core/Meshes/Builders/groundBuilder';
@@ -45,9 +47,9 @@ import {
   discCanvas,
   discScreenCanvas,
   doormatCanvas,
+  globeCanvas,
   heightToNormal,
   planksCanvas,
-  posterCanvas,
   rugCanvas,
   screenCanvas,
   sidingCanvas,
@@ -66,16 +68,21 @@ export type InteriorId = Exclude<HotspotId, 'door' | 'terminal'>;
 export type PanelId = Exclude<InteriorId, 'tv'>;
 export type ScenePhase = 'intro' | 'entering' | 'idle' | 'focus';
 export type ViewId = 'general' | 'tv' | 'desk' | 'shelf';
-export type HoverTargetId = HotspotId | 'disc';
+export type HoverTargetId = HotspotId | 'disc' | 'pad';
+type PadLink = 'demo' | 'repo';
 
 export interface HoverInfo {
   id: HoverTargetId;
   discName?: string;
+  label?: string;
   x: number;
   y: number;
 }
 
-type PickTarget = { kind: 'hotspot'; id: HotspotId } | { kind: 'disc'; index: number };
+type PickTarget =
+  | { kind: 'hotspot'; id: HotspotId }
+  | { kind: 'disc'; index: number }
+  | { kind: 'link'; pad: PadLink };
 
 export interface RoomSceneCallbacks {
   onHover?: (info: HoverInfo | null) => void;
@@ -108,29 +115,34 @@ const FOCUS: Record<InteriorId, Pose> = {
     target: new Vector3(-3.8, 1.2, -0.1),
   },
   tv: {
-    position: new Vector3(0.85, 1.55, -1.5),
-    target: new Vector3(4.0, 1.62, -1.5),
+    position: new Vector3(0.7, 1.35, -1.35),
+    target: new Vector3(3.9, 1.24, -1.55),
   },
   desk: {
-    position: new Vector3(0, 1.2, -0.4),
-    target: new Vector3(0, 1.05, -3.4),
+    position: new Vector3(0, 1.45, -1.55),
+    target: new Vector3(0, 1.42, -3.42),
   },
 };
 
 const SCREEN_POSE: Pose = {
-  position: new Vector3(2.35, 1.14, -1.5),
-  target: new Vector3(3.46, 1.05, -1.55),
+  position: new Vector3(2.05, 1.3, -1.28),
+  target: new Vector3(3.5, 0.98, -1.5),
 };
 
-const MEDIA_WALL_X = 4.0;
-const MAX_DISCS = 24;
+const MEDIA_WALL_X = 3.9;
 const RACK_COLS = 6;
-const RACK_ROWS = 4;
-const RACK_COL_GAP = 0.38;
+const RACK_ROWS = 3;
+const MAX_DISCS = RACK_COLS * RACK_ROWS;
+const RACK_COL_GAP = 0.3;
 const RACK_ROW_GAP = 0.3;
-const RACK_TOP_Y = 2.42;
+const RACK_TOP_Y = 2.463;
 const DISC_RADIUS = 0.14;
-const DVD_SLOT = new Vector3(3.52, 0.85, -0.75);
+const DISC_THICKNESS = 0.022;
+// los discos descansan en el centro de la repisa (z = -1.5), separados del tope frontal
+const RACK_DISC_X = 3.925;
+// el disco se deposita plano sobre el plato, con la etiqueta mirando hacia arriba
+const DISC_DOCK = new Vector3(3.72, 0.883, -0.82);
+const DISC_DOCK_ROT = Math.PI / 2;
 
 const ACCENT = Color3.FromHexString('#8fd6ff');
 const NEON_PINK = Color3.FromHexString('#ff2fb0');
@@ -183,7 +195,10 @@ function chamferBox(name: string, w: number, h: number, d: number, scene: Scene)
     const base = positions.length / 3;
     for (const p of [a, b, c]) {
       positions.push(p[0], p[1], p[2]);
-      uvs.push((p[uvAxes[0]] / extents[uvAxes[0]] + 1) / 2, (p[uvAxes[1]] / extents[uvAxes[1]] + 1) / 2);
+      uvs.push(
+        (p[uvAxes[0]] / extents[uvAxes[0]] + 1) / 2,
+        (p[uvAxes[1]] / extents[uvAxes[1]] + 1) / 2,
+      );
     }
     indices.push(base, base + 1, base + 2);
   };
@@ -194,31 +209,13 @@ function chamferBox(name: string, w: number, h: number, d: number, scene: Scene)
   };
 
   for (const sx of [-1, 1]) {
-    addQuad(
-      [sx * hx, ey, -ez],
-      [sx * hx, ey, ez],
-      [sx * hx, -ey, ez],
-      [sx * hx, -ey, -ez],
-      [1, 2],
-    );
+    addQuad([sx * hx, ey, -ez], [sx * hx, ey, ez], [sx * hx, -ey, ez], [sx * hx, -ey, -ez], [2, 1]);
   }
   for (const sy of [-1, 1]) {
-    addQuad(
-      [ex, sy * hy, -ez],
-      [ex, sy * hy, ez],
-      [-ex, sy * hy, ez],
-      [-ex, sy * hy, -ez],
-      [0, 2],
-    );
+    addQuad([ex, sy * hy, -ez], [ex, sy * hy, ez], [-ex, sy * hy, ez], [-ex, sy * hy, -ez], [0, 2]);
   }
   for (const sz of [-1, 1]) {
-    addQuad(
-      [-ex, ey, sz * hz],
-      [ex, ey, sz * hz],
-      [ex, -ey, sz * hz],
-      [-ex, -ey, sz * hz],
-      [0, 1],
-    );
+    addQuad([-ex, ey, sz * hz], [ex, ey, sz * hz], [ex, -ey, sz * hz], [-ex, -ey, sz * hz], [0, 1]);
   }
   for (const sx of [-1, 1]) {
     for (const sy of [-1, 1]) {
@@ -256,7 +253,12 @@ function chamferBox(name: string, w: number, h: number, d: number, scene: Scene)
   for (const sx of [-1, 1]) {
     for (const sy of [-1, 1]) {
       for (const sz of [-1, 1]) {
-        addTri([sx * hx, sy * ey, sz * ez], [sx * ex, sy * hy, sz * ez], [sx * ex, sy * ey, sz * hz], [0, 1]);
+        addTri(
+          [sx * hx, sy * ey, sz * ez],
+          [sx * ex, sy * hy, sz * ez],
+          [sx * ex, sy * ey, sz * hz],
+          [0, 1],
+        );
       }
     }
   }
@@ -313,6 +315,13 @@ export class RoomScene {
   private goal: Pose = INTRO;
   private hoveredId: HotspotId | null = null;
   private hoveredDisc: number | null = null;
+  private hoveredPad: PadLink | null = null;
+  private padsProject: DiscProject | null = null;
+  private readonly padRoots: TransformNode[] = [];
+  private demoPadLed?: PBRMaterial;
+  private repoPadLed?: PBRMaterial;
+  private demoPadRing?: PBRMaterial;
+  private repoPadRing?: PBRMaterial;
   private vhsValue = 1;
   private elapsed = 0;
   private texCounter = 0;
@@ -326,13 +335,44 @@ export class RoomScene {
   private readonly coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
   private readonly tier: TierInfo = detectDeviceTier(this.coarsePointer);
   private readonly tone = this.coarsePointer
-    ? { exposure: 1.75, vhsVignette: 0.04, ipVignette: 0.6, hemi: 0.8, moon: 1.35, fill: 0.75, shadowDarkness: 0.28, env: 1.1, contrast: 1.2, lift: 0.04 }
-    : { exposure: 1.5, vhsVignette: 0.09, ipVignette: 1.1, hemi: 0.55, moon: 1.15, fill: 0.55, shadowDarkness: 0.32, env: 0.95, contrast: 1.15, lift: 0.035 };
+    ? {
+        exposure: 1.75,
+        vhsVignette: 0.04,
+        ipVignette: 0.6,
+        hemi: 0.8,
+        moon: 1.35,
+        fill: 0.75,
+        shadowDarkness: 0.28,
+        env: 1.1,
+        contrast: 1.2,
+        lift: 0.04,
+      }
+    : {
+        exposure: 1.5,
+        vhsVignette: 0.09,
+        ipVignette: 1.1,
+        hemi: 0.55,
+        moon: 1.15,
+        fill: 0.55,
+        shadowDarkness: 0.32,
+        env: 0.95,
+        contrast: 1.15,
+        lift: 0.035,
+      };
 
   private discs: Mesh[] = [];
   private discHomes: Vector3[] = [];
   private discProjects: DiscProject[] = [];
-  private discTweens: Array<{ mesh: Mesh; from: Vector3; to: Vector3; elapsed: number; duration: number; hideAtEnd: boolean }> = [];
+  private discTweens: Array<{
+    mesh: Mesh;
+    from: Vector3;
+    to: Vector3;
+    fromRot: number;
+    toRot: number;
+    elapsed: number;
+    duration: number;
+    hideAtEnd: boolean;
+  }> = [];
   private mediaOpen = false;
   private posterPool?: SkillLogo[];
   private loadedDisc: number | null = null;
@@ -363,7 +403,16 @@ export class RoomScene {
   private normalWorker?: Worker;
   private normalCounter = 0;
   private normalPending = 0;
-  private normalJobs = new Map<number, { mat: PBRMaterial; uScale: number; vScale: number; source: HTMLCanvasElement; strength: number }>();
+  private normalJobs = new Map<
+    number,
+    {
+      mat: PBRMaterial;
+      uScale: number;
+      vScale: number;
+      source: HTMLCanvasElement;
+      strength: number;
+    }
+  >();
   private resolveNormalMaps: (() => void) | undefined;
   private readonly normalMapsReady = new Promise<void>((resolve) => {
     this.resolveNormalMaps = resolve;
@@ -383,10 +432,14 @@ export class RoomScene {
     }
   }
 
-  private static async createEngine(canvas: HTMLCanvasElement, forceWebGL: boolean): Promise<AbstractEngine> {
+  private static async createEngine(
+    canvas: HTMLCanvasElement,
+    forceWebGL: boolean,
+  ): Promise<AbstractEngine> {
     const gpu = (navigator as Navigator & { gpu?: unknown }).gpu;
     // WebGPU se salta en puntero táctil: hay móviles donde initia pero renderiza negro
-    const coarse = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+    const coarse =
+      typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
     if (!forceWebGL && gpu && !coarse) {
       try {
         // import dinámico: el transpilador WGSL solo lo descargan los
@@ -516,7 +569,10 @@ export class RoomScene {
       effect.setFloat('uVhs', this.vhsValue);
       effect.setFloat('uVignette', this.tone.vhsVignette);
       effect.setFloat('uLift', this.tone.lift);
-      effect.setVector2('uResolution', new Vector2(this.engine.getRenderWidth(), this.engine.getRenderHeight()));
+      effect.setVector2(
+        'uResolution',
+        new Vector2(this.engine.getRenderWidth(), this.engine.getRenderHeight()),
+      );
     };
     return vhs;
   }
@@ -536,7 +592,9 @@ export class RoomScene {
     const height = Math.max(1, window.innerHeight || this.engine.getRenderHeight());
     const cssAspect = width / height;
     this.viewScale =
-      cssAspect >= 1.1 ? 1 : Math.min(1.34, 1 + (1.1 - cssAspect) * (cssAspect < 0.75 ? 0.62 : 0.4));
+      cssAspect >= 1.1
+        ? 1
+        : Math.min(1.34, 1 + (1.1 - cssAspect) * (cssAspect < 0.75 ? 0.62 : 0.4));
     if (this.coarsePointer) {
       // móvil: mucho zoom — el encuadre se centra en las pantallas del TV
       // y de la PC, sin retroceso de cámara en portrait
@@ -678,9 +736,11 @@ export class RoomScene {
       for (let i = 0; i < this.discs.length; i++) {
         const mesh = this.discs[i];
         mesh.position.copyFrom(this.discHomes[i]);
+        mesh.rotation.z = 0;
         mesh.setEnabled(true);
       }
       this.discTweens = [];
+      this.setPadsProject(null);
       this.setMediaOpen(false);
       this.setScreen(null);
       return;
@@ -688,11 +748,21 @@ export class RoomScene {
     const index = this.loadedDisc;
     const mesh = this.discs[index];
     this.loadedDisc = null;
+    this.setPadsProject(null);
     this.setScreen(null);
     if (mesh) {
       mesh.setEnabled(true);
       this.discTweens = this.discTweens.filter((t) => t.mesh !== mesh);
-      this.discTweens.push({ mesh, from: mesh.position.clone(), to: this.discHomes[index].clone(), elapsed: 0, duration: 0.5, hideAtEnd: false });
+      this.discTweens.push({
+        mesh,
+        from: mesh.position.clone(),
+        to: this.discHomes[index].clone(),
+        fromRot: mesh.rotation.z,
+        toRot: 0,
+        elapsed: 0,
+        duration: 0.5,
+        hideAtEnd: false,
+      });
     }
     if (this.mediaOpen) {
       this.startTransition(FOCUS.tv, 0.7);
@@ -719,12 +789,14 @@ export class RoomScene {
   private resetMedia(): void {
     for (let i = 0; i < this.discs.length; i++) {
       this.discs[i].position.copyFrom(this.discHomes[i]);
+      this.discs[i].rotation.z = 0;
       this.discs[i].setEnabled(true);
     }
     if (this.loadedDisc !== null) {
       this.setScreen(null);
     }
     this.loadedDisc = null;
+    this.setPadsProject(null);
     this.setMediaOpen(false);
     this.discTweens = [];
   }
@@ -754,9 +826,9 @@ export class RoomScene {
       const mat = new PBRMaterial(`discMat-${index}`, this.scene);
       mat.albedoColor = Color3.Black();
       mat.emissiveColor = Color3.White();
-      mat.emissiveIntensity = 0.42;
-      mat.metallic = 0.72;
-      mat.roughness = 0.34;
+      mat.emissiveIntensity = 0.62;
+      mat.metallic = 0.6;
+      mat.roughness = 0.32;
       mat.maxSimultaneousLights = 8;
       const tex = this.texture(discCanvas(project.title, project.accent));
       mat.albedoTexture = tex;
@@ -774,7 +846,7 @@ export class RoomScene {
     const row = Math.floor(index / RACK_COLS) % RACK_ROWS;
     const z = -1.5 + (col - (RACK_COLS - 1) / 2) * RACK_COL_GAP;
     const y = RACK_TOP_Y - row * RACK_ROW_GAP;
-    return new Vector3(MEDIA_WALL_X, y, z);
+    return new Vector3(RACK_DISC_X, y, z);
   }
 
   private updateDisc(dt: number): void {
@@ -785,7 +857,9 @@ export class RoomScene {
       const tween = this.discTweens[i];
       tween.elapsed += dt;
       const t = Math.min(1, tween.elapsed / tween.duration);
-      Vector3.LerpToRef(tween.from, tween.to, easeInOutCubic(t), tween.mesh.position);
+      const e = easeInOutCubic(t);
+      Vector3.LerpToRef(tween.from, tween.to, e, tween.mesh.position);
+      tween.mesh.rotation.z = tween.fromRot + (tween.toRot - tween.fromRot) * e;
       if (t >= 1) {
         tween.mesh.setEnabled(!tween.hideAtEnd);
         this.discTweens.splice(i, 1);
@@ -809,14 +883,35 @@ export class RoomScene {
       if (prevMesh) {
         prevMesh.setEnabled(true);
         this.discTweens = this.discTweens.filter((t) => t.mesh !== prevMesh);
-        this.discTweens.push({ mesh: prevMesh, from: prevMesh.position.clone(), to: this.discHomes[prevIndex].clone(), elapsed: 0, duration: 0.5, hideAtEnd: false });
+        this.discTweens.push({
+          mesh: prevMesh,
+          from: prevMesh.position.clone(),
+          to: this.discHomes[prevIndex].clone(),
+          fromRot: prevMesh.rotation.z,
+          toRot: 0,
+          elapsed: 0,
+          duration: 0.5,
+          hideAtEnd: false,
+        });
       }
     }
     this.discTweens = this.discTweens.filter((t) => t.mesh !== mesh);
     mesh.setEnabled(true);
     mesh.position.copyFrom(this.discHomes[index]);
-    this.discTweens.push({ mesh, from: this.discHomes[index].clone(), to: DVD_SLOT.clone(), elapsed: 0, duration: 0.6, hideAtEnd: true });
+    mesh.rotation.z = 0;
+    // viaja desde el estante, gira y queda plano sobre el plato del reproductor
+    this.discTweens.push({
+      mesh,
+      from: this.discHomes[index].clone(),
+      to: DISC_DOCK.clone(),
+      fromRot: 0,
+      toRot: DISC_DOCK_ROT,
+      elapsed: 0,
+      duration: 0.7,
+      hideAtEnd: false,
+    });
     this.loadedDisc = index;
+    this.setPadsProject(project);
     this.setMediaOpen(true);
     this.clearHighlights();
     this.callbacks.onHover?.(null);
@@ -830,7 +925,7 @@ export class RoomScene {
       return;
     }
     this.tvScreenTexture?.dispose();
-    this.tvScreenTexture = this.texture(canvas ?? screenCanvas(), 1, 1, false, true, false);
+    this.tvScreenTexture = this.texture(canvas ?? screenCanvas(), 1, 1, false, false, false);
     this.tvScreenMat.emissiveTexture = this.tvScreenTexture;
   }
 
@@ -861,13 +956,20 @@ export class RoomScene {
     this.updateDoor(dt);
     this.updateElevator(dt);
     this.updateDisc(dt);
+    this.updatePads();
     this.updateChair(dt);
     this.updateCamera(dt);
 
     this.scene.render();
   }
 
-  private static readonly RESOLUTION_SCALE: Record<number, number> = { 4: 1, 3: 1, 2: 0.9, 1: 0.8, 0: 0.62 };
+  private static readonly RESOLUTION_SCALE: Record<number, number> = {
+    4: 1,
+    3: 1,
+    2: 0.9,
+    1: 0.8,
+    0: 0.62,
+  };
 
   private applyResolution(): void {
     const dpr = window.devicePixelRatio || 1;
@@ -938,7 +1040,8 @@ export class RoomScene {
       this.vhsAttached = false;
     }
 
-    this.scene.environmentIntensity = next >= 2 ? this.tone.env : next >= 1 ? this.tone.env * 0.7 : 0.4;
+    this.scene.environmentIntensity =
+      next >= 2 ? this.tone.env : next >= 1 ? this.tone.env * 0.7 : 0.4;
     const aniso = next >= 1 ? 4 : 1;
     for (const tex of this.scene.textures) {
       tex.anisotropicFilteringLevel = aniso;
@@ -955,7 +1058,12 @@ export class RoomScene {
       if (!SSAO2RenderingPipeline.IsSupported) {
         return;
       }
-      const ssao = new SSAO2RenderingPipeline('ssao2', this.scene, { ssaoRatio: 0.5, blurRatio: 1 }, [this.camera]);
+      const ssao = new SSAO2RenderingPipeline(
+        'ssao2',
+        this.scene,
+        { ssaoRatio: 0.5, blurRatio: 1 },
+        [this.camera],
+      );
       ssao.radius = 0.8;
       ssao.totalStrength = 0.9;
       ssao.maxZ = 25;
@@ -1005,7 +1113,9 @@ export class RoomScene {
     if (!this.shadow) {
       return;
     }
-    this.shadowCasters = (this.shadow.getShadowMap()?.renderList ?? []).filter((mesh: AbstractMesh) => !mesh.isDisposed());
+    this.shadowCasters = (this.shadow.getShadowMap()?.renderList ?? []).filter(
+      (mesh: AbstractMesh) => !mesh.isDisposed(),
+    );
     try {
       this.shadow.dispose();
     } catch {}
@@ -1064,6 +1174,8 @@ export class RoomScene {
       animated.add(this.chairRoot);
     }
     this.discs.forEach((disc) => animated.add(disc));
+    // los mandos conservan sus materiales y metadatos (no se pueden fusionar)
+    this.padRoots.forEach((root) => animated.add(root));
     return animated;
   }
 
@@ -1090,11 +1202,13 @@ export class RoomScene {
       if (this.isUnderAnimatedNode(mesh, animated) || keep.has(mesh.name)) {
         continue;
       }
-      const meta = (mesh.metadata as { hotspotId?: string; discIndex?: number } | null) ?? null;
+      const meta =
+        (mesh.metadata as { hotspotId?: string; discIndex?: number; padLink?: string } | null) ??
+        null;
       if (meta && typeof meta.discIndex === 'number') {
         continue;
       }
-      const metaKey = meta ? `|meta:${meta.hotspotId ?? ''}` : '';
+      const metaKey = meta ? `|meta:${meta.hotspotId ?? ''}:${meta.padLink ?? ''}` : '';
       const key = `${mesh.material.uniqueId}${metaKey}`;
       const list = groups.get(key);
       if (list) {
@@ -1126,6 +1240,8 @@ export class RoomScene {
       }
       merged.freezeWorldMatrix();
     }
+    // las luces locales se acotaron antes del merge: volver a acotarlas a los meshes fusionados
+    this.scopeLocalLights(this.localLights);
   }
 
   private freezeStaticMatrices(): void {
@@ -1145,8 +1261,18 @@ export class RoomScene {
       const t = Math.min(1, this.transition.elapsed / this.transition.duration);
       const e = easeInOutCubic(t);
 
-      Vector3.LerpToRef(this.transition.from.position, this.transition.to.position, e, this.smoothPosition);
-      Vector3.LerpToRef(this.transition.from.target, this.transition.to.target, e, this.smoothTarget);
+      Vector3.LerpToRef(
+        this.transition.from.position,
+        this.transition.to.position,
+        e,
+        this.smoothPosition,
+      );
+      Vector3.LerpToRef(
+        this.transition.from.target,
+        this.transition.to.target,
+        e,
+        this.smoothTarget,
+      );
 
       if (t >= 1) {
         if (this.transition.to === IDLE || this.phase === 'focus') {
@@ -1156,12 +1282,19 @@ export class RoomScene {
       }
     } else {
       const smooth = Math.min(1, dt * 3.2);
-      this.smoothPosition.addInPlace(this.goal.position.subtract(this.smoothPosition).scale(smooth));
+      this.smoothPosition.addInPlace(
+        this.goal.position.subtract(this.smoothPosition).scale(smooth),
+      );
       this.smoothTarget.addInPlace(this.goal.target.subtract(this.smoothTarget).scale(smooth));
     }
 
-    const bob = this.phase === 'idle' || this.phase === 'focus' ? Math.abs(Math.sin(this.elapsed * 1.1)) * 0.012 : 0;
-    this.smoothPosition.subtractToRef(this.smoothTarget, this.viewOffset).scaleInPlace(this.viewScale);
+    const bob =
+      this.phase === 'idle' || this.phase === 'focus'
+        ? Math.abs(Math.sin(this.elapsed * 1.1)) * 0.012
+        : 0;
+    this.smoothPosition
+      .subtractToRef(this.smoothTarget, this.viewOffset)
+      .scaleInPlace(this.viewScale);
     this.camera.position.copyFrom(this.smoothTarget).addInPlace(this.viewOffset);
     this.camera.position.y += bob;
     this.camera.setTarget(this.smoothTarget);
@@ -1206,7 +1339,12 @@ export class RoomScene {
     flipU = false,
     flipV = false,
   ): DynamicTexture {
-    const dt = new DynamicTexture(`tex-${this.texCounter++}`, { width: canvas.width, height: canvas.height }, this.scene, true);
+    const dt = new DynamicTexture(
+      `tex-${this.texCounter++}`,
+      { width: canvas.width, height: canvas.height },
+      this.scene,
+      true,
+    );
     dt.getContext().drawImage(canvas, 0, 0);
     dt.update();
     dt.uScale = flipU ? -uScale : uScale;
@@ -1245,7 +1383,14 @@ export class RoomScene {
     return dt;
   }
 
-  private addPoster(name: string, skill: SkillLogo, w: number, h: number, pos: Vector3, rotY: number): void {
+  private addPoster(
+    name: string,
+    skill: SkillLogo,
+    w: number,
+    h: number,
+    pos: Vector3,
+    rotY: number,
+  ): void {
     const plane = CreatePlane(name, { width: w, height: h }, this.scene);
     plane.position.copyFrom(pos);
     plane.rotation.y = rotY;
@@ -1262,7 +1407,13 @@ export class RoomScene {
     plane.material = mat;
   }
 
-  private bump(mat: PBRMaterial, source: HTMLCanvasElement, uScale = 1, vScale = 1, strength = 2): void {
+  private bump(
+    mat: PBRMaterial,
+    source: HTMLCanvasElement,
+    uScale = 1,
+    vScale = 1,
+    strength = 2,
+  ): void {
     const ctx = source.getContext('2d');
     if (!this.normalWorker || !ctx) {
       mat.bumpTexture = this.texture(heightToNormal(source, strength), uScale, vScale, true);
@@ -1283,7 +1434,9 @@ export class RoomScene {
 
   private initNormalWorker(): void {
     try {
-      const worker = new Worker(new URL('./normal-map.worker', import.meta.url), { type: 'module' });
+      const worker = new Worker(new URL('./normal-map.worker', import.meta.url), {
+        type: 'module',
+      });
       worker.onmessage = (event: MessageEvent) => this.onNormalMapResult(event.data);
       worker.onerror = () => this.fallbackNormalJobs();
       this.normalWorker = worker;
@@ -1293,7 +1446,12 @@ export class RoomScene {
     }
   }
 
-  private onNormalMapResult(data: { id: number; width: number; height: number; data: Uint8ClampedArray<ArrayBuffer> }): void {
+  private onNormalMapResult(data: {
+    id: number;
+    width: number;
+    height: number;
+    data: Uint8ClampedArray<ArrayBuffer>;
+  }): void {
     const job = this.normalJobs.get(data.id);
     if (!job || this.disposed) {
       return;
@@ -1322,7 +1480,12 @@ export class RoomScene {
     console.warn('Worker de normal maps falló, se completa en main thread.');
     this.normalWorker = undefined;
     for (const job of this.normalJobs.values()) {
-      job.mat.bumpTexture = this.texture(heightToNormal(job.source, job.strength), job.uScale, job.vScale, true);
+      job.mat.bumpTexture = this.texture(
+        heightToNormal(job.source, job.strength),
+        job.uScale,
+        job.vScale,
+        true,
+      );
     }
     this.normalJobs.clear();
     this.normalPending = 0;
@@ -1332,7 +1495,12 @@ export class RoomScene {
   private pbr(
     name: string,
     color: string,
-    opts: { metallic?: number; roughness?: number; emissive?: Color3; emissiveIntensity?: number } = {},
+    opts: {
+      metallic?: number;
+      roughness?: number;
+      emissive?: Color3;
+      emissiveIntensity?: number;
+    } = {},
   ): PBRMaterial {
     const key = `pbr|${name}|${color}|${opts.metallic ?? ''}|${opts.roughness ?? ''}|${opts.emissive ? opts.emissive.toHexString() : ''}|${opts.emissiveIntensity ?? ''}`;
     const cached = this.materialCache.get(key);
@@ -1369,14 +1537,66 @@ export class RoomScene {
     return mat;
   }
 
-  private box(name: string, size: { w: number; h: number; d: number }, pos: Vector3, mat: PBRMaterial): Mesh {
+  private box(
+    name: string,
+    size: { w: number; h: number; d: number },
+    pos: Vector3,
+    mat: PBRMaterial,
+  ): Mesh {
     const mesh = chamferBox(name, size.w, size.h, size.d, this.scene);
     mesh.position.copyFrom(pos);
     mesh.material = mat;
     return mesh;
   }
 
-  private slab(name: string, w: number, d: number, thickness: number, radius: number, pos: Vector3, mat: PBRMaterial): Mesh {
+  // proyecta la geometría (coords. de mundo) sobre la superficie frontal de una esfera
+  private warpToSphere(
+    mesh: Mesh,
+    sphereRadius: number,
+    cx: number,
+    cy: number,
+    cz: number,
+    sourceRadius: number,
+    squashY: number,
+  ): Mesh {
+    const positions = mesh.getVerticesData(VertexBuffer.PositionKind)!;
+    const count = positions.length / 3;
+    const world = new Vector3();
+    const matrix = mesh.computeWorldMatrix(true);
+    for (let i = 0; i < count; i++) {
+      Vector3.FromArrayToRef(positions, i * 3, world);
+      Vector3.TransformCoordinatesToRef(world, matrix, world);
+      let u = (world.x - cx) / sourceRadius;
+      let v = (world.y - cy) / sourceRadius;
+      const u2 = u * u;
+      const v2 = (v / squashY) * (v / squashY);
+      if (u2 + v2 > 1) {
+        const k = 1 / Math.sqrt(u2 + v2);
+        u *= k;
+        v *= k;
+      }
+      const nx = u;
+      const ny = v * squashY;
+      const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+      positions[i * 3] = cx + nx * sphereRadius;
+      positions[i * 3 + 1] = cy + ny * sphereRadius;
+      positions[i * 3 + 2] = cz + nz * sphereRadius;
+    }
+    mesh.setVerticesData(VertexBuffer.PositionKind, positions);
+    mesh.position = Vector3.Zero();
+    mesh.rotation = Vector3.Zero();
+    return mesh;
+  }
+
+  private slab(
+    name: string,
+    w: number,
+    d: number,
+    thickness: number,
+    radius: number,
+    pos: Vector3,
+    mat: PBRMaterial,
+  ): Mesh {
     const r = Math.max(0.004, Math.min(radius, w / 2 - 0.01, d / 2 - 0.01));
     const seg = 5;
     const pts: Vector3[] = [];
@@ -1426,7 +1646,14 @@ export class RoomScene {
         g.addColorStop(1, bottom ? '#020208' : '#0a0820');
         ctx.fillStyle = g;
         ctx.fillRect(0, 0, size, size);
-        const blob = ctx.createRadialGradient(size * 0.7, size * 0.5, 0, size * 0.7, size * 0.5, size * 0.5);
+        const blob = ctx.createRadialGradient(
+          size * 0.7,
+          size * 0.5,
+          0,
+          size * 0.7,
+          size * 0.5,
+          size * 0.5,
+        );
         blob.addColorStop(0, 'rgba(255,80,190,0.35)');
         blob.addColorStop(1, 'rgba(255,80,190,0)');
         ctx.fillStyle = blob;
@@ -1477,9 +1704,18 @@ export class RoomScene {
     const doorHinge = new TransformNode('hinge', this.scene);
     doorHinge.position = new Vector3(-0.62, 1.15, 3.9);
     this.doorPivot = doorHinge;
-    const door = this.box('doorPanel', { w: 1.24, h: 2.25, d: 0.12 }, new Vector3(0.62, 0, 0), doorMat);
+    const door = this.box(
+      'doorPanel',
+      { w: 1.24, h: 2.25, d: 0.12 },
+      new Vector3(0.62, 0, 0),
+      doorMat,
+    );
     door.parent = doorHinge;
-    const handle = CreateCylinder('handle', { height: 0.16, diameter: 0.07, tessellation: 20 }, this.scene);
+    const handle = CreateCylinder(
+      'handle',
+      { height: 0.16, diameter: 0.07, tessellation: 20 },
+      this.scene,
+    );
     handle.rotation.z = Math.PI / 2;
     handle.position = new Vector3(1.02, 0.1, 0.16);
     handle.material = this.emissive('handleMat', hex('#ffd27a'), 0.6);
@@ -1495,12 +1731,14 @@ export class RoomScene {
 
     const windowMat = this.emissive('windowGlass', hex('#ffcf8a'), 0.7);
     const pane = this.pbr('pane', '#0a0c16', { roughness: 0.2 });
-    [
-      new Vector3(-2.9, 2.0, 4.01),
-      new Vector3(2.9, 2.0, 4.01),
-    ].forEach((p, i) => {
+    [new Vector3(-2.9, 2.0, 4.01), new Vector3(2.9, 2.0, 4.01)].forEach((p, i) => {
       this.box(`window${i}`, { w: 1.6, h: 1.3, d: 0.06 }, p, windowMat);
-      this.box(`windowFrame${i}`, { w: 1.8, h: 1.5, d: 0.12 }, p.add(new Vector3(0, 0, -0.06)), pane);
+      this.box(
+        `windowFrame${i}`,
+        { w: 1.8, h: 1.5, d: 0.12 },
+        p.add(new Vector3(0, 0, -0.06)),
+        pane,
+      );
     });
 
     const skyMat = new StandardMaterial('skyMat', this.scene);
@@ -1508,7 +1746,11 @@ export class RoomScene {
     skyMat.emissiveTexture = this.texture(skyCanvas());
     skyMat.backFaceCulling = false;
     skyMat.fogEnabled = false;
-    const sky = CreateSphere('sky', { diameter: 300, segments: 12, sideOrientation: Mesh.BACKSIDE }, this.scene);
+    const sky = CreateSphere(
+      'sky',
+      { diameter: 300, segments: 12, sideOrientation: Mesh.BACKSIDE },
+      this.scene,
+    );
     sky.material = skyMat;
     this.glow.addExcludedMesh(sky);
   }
@@ -1538,13 +1780,46 @@ export class RoomScene {
     this.box('baseLeft', { w: 0.05, h: 0.16, d: 8 }, new Vector3(-4.06, 0.08, -0.1), baseboard);
     this.box('baseRight', { w: 0.05, h: 0.16, d: 8 }, new Vector3(4.06, 0.08, -0.1), baseboard);
 
-    const backWall = this.box('backWall', { w: 8.4, h: 2.8, d: 0.12 }, new Vector3(0, 1.4, -4.11), wallMat);
-    const leftWall = this.box('leftWall', { w: 0.12, h: 2.8, d: 8.2 }, new Vector3(-4.16, 1.4, -0.1), wallMat);
-    const rightWall = this.box('rightWall', { w: 0.12, h: 2.8, d: 8.2 }, new Vector3(4.16, 1.4, -0.1), wallMat);
-    const frontWallL = this.box('frontWallL', { w: 3.38, h: 2.8, d: 0.12 }, new Vector3(-2.35, 1.4, 3.9), wallMat);
-    const frontWallR = this.box('frontWallR', { w: 3.38, h: 2.8, d: 0.12 }, new Vector3(2.35, 1.4, 3.9), wallMat);
+    const backWall = this.box(
+      'backWall',
+      { w: 8.4, h: 2.8, d: 0.12 },
+      new Vector3(0, 1.4, -4.11),
+      wallMat,
+    );
+    const leftWall = this.box(
+      'leftWall',
+      { w: 0.12, h: 2.8, d: 8.2 },
+      new Vector3(-4.16, 1.4, -0.1),
+      wallMat,
+    );
+    const rightWall = this.box(
+      'rightWall',
+      { w: 0.12, h: 2.8, d: 8.2 },
+      new Vector3(4.16, 1.4, -0.1),
+      wallMat,
+    );
+    const frontWallL = this.box(
+      'frontWallL',
+      { w: 3.38, h: 2.8, d: 0.12 },
+      new Vector3(-2.35, 1.4, 3.9),
+      wallMat,
+    );
+    const frontWallR = this.box(
+      'frontWallR',
+      { w: 3.38, h: 2.8, d: 0.12 },
+      new Vector3(2.35, 1.4, 3.9),
+      wallMat,
+    );
 
-    const rug = this.slab('rug', 3.4, 2.6, 0.03, 0.12, new Vector3(0, 0.02, -0.4), this.pbr('rugMat', '#ffffff', { roughness: 1 }));
+    const rug = this.slab(
+      'rug',
+      3.4,
+      2.6,
+      0.03,
+      0.12,
+      new Vector3(0, 0.02, -0.4),
+      this.pbr('rugMat', '#ffffff', { roughness: 1 }),
+    );
     (rug.material as PBRMaterial).albedoTexture = this.texture(rugCanvas());
 
     this.buildDesk();
@@ -1564,11 +1839,19 @@ export class RoomScene {
     hallFloorMat.albedoTexture = this.texture(hallFloorSrc, 1, 2);
     this.bump(hallFloorMat, hallFloorSrc, 1, 2, 3);
 
-    const hallFloor = CreateGround('hallFloor', { width: 2.44, height: 4.76, subdivisions: 2 }, this.scene);
+    const hallFloor = CreateGround(
+      'hallFloor',
+      { width: 2.44, height: 4.76, subdivisions: 2 },
+      this.scene,
+    );
     hallFloor.material = hallFloorMat;
     hallFloor.position = new Vector3(0, 0.002, 6.28);
 
-    const hallCeil = CreateGround('hallCeil', { width: 2.44, height: 4.76, subdivisions: 1 }, this.scene);
+    const hallCeil = CreateGround(
+      'hallCeil',
+      { width: 2.44, height: 4.76, subdivisions: 1 },
+      this.scene,
+    );
     hallCeil.material = hallWall;
     hallCeil.position = new Vector3(0, 2.7, 6.28);
     hallCeil.rotation.x = Math.PI;
@@ -1585,28 +1868,77 @@ export class RoomScene {
     this.box('hallCoverR', { w: 0.39, h: 2.7, d: 0.06 }, new Vector3(0.855, 1.35, 4.03), hallWall);
     this.box('hallCoverT', { w: 2.1, h: 0.4, d: 0.06 }, new Vector3(0, 2.5, 4.03), hallWall);
 
-    const doormat = this.slab('doormat', 1.3, 0.7, 0.03, 0.05, new Vector3(0, 0.02, 4.45), this.pbr('doormatMat', '#ffffff', { roughness: 1 }));
+    const doormat = this.slab(
+      'doormat',
+      1.3,
+      0.7,
+      0.03,
+      0.05,
+      new Vector3(0, 0.02, 4.45),
+      this.pbr('doormatMat', '#ffffff', { roughness: 1 }),
+    );
     (doormat.material as PBRMaterial).albedoTexture = this.texture(doormatCanvas());
 
-    const runner = this.slab('hallRunner', 0.9, 2.4, 0.02, 0.06, new Vector3(0, 0.013, 6.15), this.pbr('hallRunnerMat', '#ffffff', { roughness: 1 }));
+    const runner = this.slab(
+      'hallRunner',
+      0.9,
+      2.4,
+      0.02,
+      0.06,
+      new Vector3(0, 0.013, 6.15),
+      this.pbr('hallRunnerMat', '#ffffff', { roughness: 1 }),
+    );
     (runner.material as PBRMaterial).albedoTexture = this.texture(rugCanvas());
 
     const hallSkills = this.posterPoolShuffled().slice(0, 4);
     const hallPosters: { skill: SkillLogo; w: number; h: number; pos: Vector3; rotY: number }[] = [
-      { skill: hallSkills[0], w: 0.4, h: 0.56, pos: new Vector3(-1.04, 1.5, 5.3), rotY: -Math.PI / 2 },
-      { skill: hallSkills[1], w: 0.4, h: 0.56, pos: new Vector3(-1.04, 1.55, 6.2), rotY: -Math.PI / 2 },
-      { skill: hallSkills[2], w: 0.42, h: 0.58, pos: new Vector3(1.04, 1.5, 5.9), rotY: Math.PI / 2 },
-      { skill: hallSkills[3], w: 0.4, h: 0.56, pos: new Vector3(1.04, 1.52, 6.9), rotY: Math.PI / 2 },
+      {
+        skill: hallSkills[0],
+        w: 0.4,
+        h: 0.56,
+        pos: new Vector3(-1.04, 1.5, 5.3),
+        rotY: -Math.PI / 2,
+      },
+      {
+        skill: hallSkills[1],
+        w: 0.4,
+        h: 0.56,
+        pos: new Vector3(-1.04, 1.55, 6.2),
+        rotY: -Math.PI / 2,
+      },
+      {
+        skill: hallSkills[2],
+        w: 0.42,
+        h: 0.58,
+        pos: new Vector3(1.04, 1.5, 5.9),
+        rotY: Math.PI / 2,
+      },
+      {
+        skill: hallSkills[3],
+        w: 0.4,
+        h: 0.56,
+        pos: new Vector3(1.04, 1.52, 6.9),
+        rotY: Math.PI / 2,
+      },
     ];
     hallPosters.forEach((p, i) => {
       this.addPoster(`hallPoster${i}`, p.skill, p.w, p.h, p.pos, p.rotY);
     });
 
-    const plate = this.box('hallPlate', { w: 0.14, h: 0.18, d: 0.04 }, new Vector3(0.9, 1.6, 4.09), this.pbr('hallPlateMat', '#161428', { roughness: 0.4, metallic: 0.4 }));
+    const plate = this.box(
+      'hallPlate',
+      { w: 0.14, h: 0.18, d: 0.04 },
+      new Vector3(0.9, 1.6, 4.09),
+      this.pbr('hallPlateMat', '#161428', { roughness: 0.4, metallic: 0.4 }),
+    );
     void plate;
 
     [5.3, 6.7].forEach((z, i) => {
-      const fixture = CreateCylinder('hallLamp' + i, { height: 0.04, diameter: 0.24, tessellation: 20 }, this.scene);
+      const fixture = CreateCylinder(
+        'hallLamp' + i,
+        { height: 0.04, diameter: 0.24, tessellation: 20 },
+        this.scene,
+      );
       fixture.position = new Vector3(0, 2.67, z);
       fixture.material = this.emissive('hallLampMat' + i, hex('#ffd9a0'), 1.4);
       const light = new PointLight('hallPt' + i, new Vector3(0, 2.45, z), this.scene);
@@ -1627,7 +1959,12 @@ export class RoomScene {
     this.box('elevThreshold', { w: 2.1, h: 0.024, d: 0.1 }, new Vector3(0, 0.012, 7.5), metal);
     this.box('elevHeader', { w: 2.1, h: 0.42, d: 0.14 }, new Vector3(0, 2.49, 7.5), metalDark);
 
-    const elevLightPanel = this.box('elevLightPanel', { w: 0.8, h: 0.02, d: 0.5 }, new Vector3(0, 2.62, 8.05), this.emissive('elevLightPanelMat', hex('#dfe8ff'), 1.3));
+    const elevLightPanel = this.box(
+      'elevLightPanel',
+      { w: 0.8, h: 0.02, d: 0.5 },
+      new Vector3(0, 2.62, 8.05),
+      this.emissive('elevLightPanelMat', hex('#dfe8ff'), 1.3),
+    );
     void elevLightPanel;
     const cabinLight = new PointLight('elevLight', new Vector3(0, 2.4, 8.0), this.scene);
     cabinLight.diffuse = hex('#dfe8ff');
@@ -1636,28 +1973,57 @@ export class RoomScene {
     this.localLights.push(cabinLight);
 
     const elevDoorMat = this.pbr('elevDoorMat', '#aab0bc', { roughness: 0.28, metallic: 0.95 });
-    const left = this.box('elevDoorL', { w: 1.06, h: 2.3, d: 0.06 }, new Vector3(0, 1.15, 7.48), elevDoorMat);
-    const right = this.box('elevDoorR', { w: 1.06, h: 2.3, d: 0.06 }, new Vector3(0, 1.15, 7.48), elevDoorMat);
+    const left = this.box(
+      'elevDoorL',
+      { w: 1.06, h: 2.3, d: 0.06 },
+      new Vector3(0, 1.15, 7.48),
+      elevDoorMat,
+    );
+    const right = this.box(
+      'elevDoorR',
+      { w: 1.06, h: 2.3, d: 0.06 },
+      new Vector3(0, 1.15, 7.48),
+      elevDoorMat,
+    );
     this.elevatorLeft = left;
     this.elevatorRight = right;
     left.position.x = -(0.53 + this.elevatorT * 1.06);
     right.position.x = 0.53 + this.elevatorT * 1.06;
 
     const stripMat = this.emissive('elevStripMat', NEON_CYAN, 1.2);
-    const stripL = this.box('elevStripL', { w: 0.86, h: 0.02, d: 0.012 }, new Vector3(0, 0.7, 0.037), stripMat);
+    const stripL = this.box(
+      'elevStripL',
+      { w: 0.86, h: 0.02, d: 0.012 },
+      new Vector3(0, 0.7, 0.037),
+      stripMat,
+    );
     stripL.parent = left;
-    const stripR = this.box('elevStripR', { w: 0.86, h: 0.02, d: 0.012 }, new Vector3(0, 0.7, 0.037), stripMat);
+    const stripR = this.box(
+      'elevStripR',
+      { w: 0.86, h: 0.02, d: 0.012 },
+      new Vector3(0, 0.7, 0.037),
+      stripMat,
+    );
     stripR.parent = right;
 
     left.metadata = { hotspotId: 'door' as HotspotId };
     right.metadata = { hotspotId: 'door' as HotspotId };
     this.doorPickable.push(left, right);
 
-    const callPanel = this.box('elevCall', { w: 0.05, h: 0.42, d: 0.16 }, new Vector3(1.02, 1.2, 6.9), metalDark);
+    const callPanel = this.box(
+      'elevCall',
+      { w: 0.05, h: 0.42, d: 0.16 },
+      new Vector3(1.02, 1.2, 6.9),
+      metalDark,
+    );
     callPanel.metadata = { hotspotId: 'door' as HotspotId };
     this.doorPickable.push(callPanel);
     [1.32, 1.2, 1.08].forEach((y, i) => {
-      const btn = CreateCylinder('elevBtn' + i, { height: 0.02, diameter: 0.05, tessellation: 16 }, this.scene);
+      const btn = CreateCylinder(
+        'elevBtn' + i,
+        { height: 0.02, diameter: 0.05, tessellation: 16 },
+        this.scene,
+      );
       btn.rotation.z = Math.PI / 2;
       btn.position = new Vector3(0.99, y, 6.9);
       btn.material = this.emissive('elevBtnMat' + i, i === 0 ? NEON_PINK : hex('#cfe0ff'), 1.2);
@@ -1699,15 +2065,31 @@ export class RoomScene {
       new Vector3(-1.28, legHeight / 2, -2.7),
       new Vector3(1.28, legHeight / 2, -2.7),
     ].forEach((p, i) => {
-      const leg = CreateCylinder('deskLeg' + i, { height: legHeight, diameter: 0.06, tessellation: 14 }, this.scene);
+      const leg = CreateCylinder(
+        'deskLeg' + i,
+        { height: legHeight, diameter: 0.06, tessellation: 14 },
+        this.scene,
+      );
       leg.position.copyFrom(p);
       leg.material = metal;
     });
 
-    const monitorStand = CreateCylinder('monStand', { height: 0.3, diameter: 0.36, tessellation: 16 }, this.scene);
+    const monitorStand = CreateCylinder(
+      'monStand',
+      { height: 0.3, diameter: 0.36, tessellation: 16 },
+      this.scene,
+    );
     monitorStand.position = new Vector3(0, 0.92, -3.38);
     monitorStand.material = metal;
-    const monitorBase = this.slab('monBase', 0.58, 0.32, 0.03, 0.06, new Vector3(0, 0.79, -3.38), metal);
+    const monitorBase = this.slab(
+      'monBase',
+      0.58,
+      0.32,
+      0.03,
+      0.06,
+      new Vector3(0, 0.79, -3.38),
+      metal,
+    );
 
     const bezel = this.pbr('bezel', '#0a0a12', { roughness: 0.4, metallic: 0.3 });
 
@@ -1737,7 +2119,8 @@ export class RoomScene {
 
     const buildOutputCanvas = (() => {
       const canvas = document.createElement('canvas');
-      canvas.width = 512; canvas.height = 320;
+      canvas.width = 512;
+      canvas.height = 320;
       const ctx = canvas.getContext('2d')!;
       ctx.fillStyle = '#020a14';
       ctx.fillRect(0, 0, 512, 320);
@@ -1771,18 +2154,62 @@ export class RoomScene {
 
     // Cámara mirando hacia -Z: el lado izquierdo de la imagen es +X.
     // El monitor de la izquierda (según el espectador) lleva la consola.
-    const monitorBodyL = this.box('monitorL', { w: 1.1, h: 0.95, d: 0.06 }, new Vector3(0.68, 1.42, -3.42), bezel);
-    const monitorScreenL = this.box('monitorScreenL', { w: 0.98, h: 0.8, d: 0.02 }, new Vector3(0.68, 1.42, -3.37), termScreenMat);
+    const monitorBodyL = this.box(
+      'monitorL',
+      { w: 1.1, h: 0.95, d: 0.06 },
+      new Vector3(0.68, 1.42, -3.42),
+      bezel,
+    );
+    const monitorScreenL = this.box(
+      'monitorScreenL',
+      { w: 0.98, h: 0.8, d: 0.02 },
+      new Vector3(0.68, 1.42, -3.37),
+      termScreenMat,
+    );
     monitorScreenL.metadata = { hotspotId: 'terminal' as HotspotId };
-    const monitorBodyR = this.box('monitorR', { w: 1.1, h: 0.95, d: 0.06 }, new Vector3(-0.68, 1.42, -3.42), bezel);
-    const monitorScreenR = this.box('monitorScreenR', { w: 0.98, h: 0.8, d: 0.02 }, new Vector3(-0.68, 1.42, -3.37), outScreenMat);
+    const monitorBodyR = this.box(
+      'monitorR',
+      { w: 1.1, h: 0.95, d: 0.06 },
+      new Vector3(-0.68, 1.42, -3.42),
+      bezel,
+    );
+    const monitorScreenR = this.box(
+      'monitorScreenR',
+      { w: 0.98, h: 0.8, d: 0.02 },
+      new Vector3(-0.68, 1.42, -3.37),
+      outScreenMat,
+    );
 
-    const kb = this.slab('keyboard', 1.0, 0.36, 0.04, 0.03, new Vector3(0, 0.79, -3.0), this.pbr('kb', '#1a1a24', { roughness: 0.6 }));
-    const kbTop = this.slab('kbTop', 0.92, 0.28, 0.02, 0.02, new Vector3(0, 0.815, -3.0), this.pbr('kbTop', '#242433', { roughness: 0.5 }));
+    const kb = this.slab(
+      'keyboard',
+      1.0,
+      0.36,
+      0.04,
+      0.03,
+      new Vector3(0, 0.79, -3.0),
+      this.pbr('kb', '#1a1a24', { roughness: 0.6 }),
+    );
+    const kbTop = this.slab(
+      'kbTop',
+      0.92,
+      0.28,
+      0.02,
+      0.02,
+      new Vector3(0, 0.815, -3.0),
+      this.pbr('kbTop', '#242433', { roughness: 0.5 }),
+    );
     const keyMat = this.pbr('kbKeyMat', '#33364a', { roughness: 0.45 });
     for (let r = 0; r < 3; r++) {
       for (let c = 0; c < 12; c++) {
-        this.slab(`key-${r}-${c}`, 0.055, 0.058, 0.014, 0.008, new Vector3(-0.4 + c * 0.073, 0.828, -3.12 + r * 0.058), this.pbr('kbKey2', '#2b2d3c', { roughness: 0.5 }));
+        this.slab(
+          `key-${r}-${c}`,
+          0.055,
+          0.058,
+          0.014,
+          0.008,
+          new Vector3(-0.4 + c * 0.073, 0.828, -3.12 + r * 0.058),
+          this.pbr('kbKey2', '#2b2d3c', { roughness: 0.5 }),
+        );
       }
     }
     void kb;
@@ -1792,14 +2219,26 @@ export class RoomScene {
     mouse.position = new Vector3(0.8, 0.8, -2.95);
     mouse.material = this.pbr('mouseMat', '#1c1c28', { roughness: 0.4 });
 
-    const mug = CreateCylinder('mug', { height: 0.14, diameterTop: 0.12, diameterBottom: 0.1, tessellation: 20 }, this.scene);
+    const mug = CreateCylinder(
+      'mug',
+      { height: 0.14, diameterTop: 0.12, diameterBottom: 0.1, tessellation: 20 },
+      this.scene,
+    );
     mug.position = new Vector3(-0.75, 0.82, -3.15);
     mug.material = this.pbr('mugMat', '#c95a3c', { roughness: 0.5 });
-    const mugInner = CreateCylinder('mugInner', { height: 0.02, diameter: 0.1, tessellation: 20 }, this.scene);
+    const mugInner = CreateCylinder(
+      'mugInner',
+      { height: 0.02, diameter: 0.1, tessellation: 20 },
+      this.scene,
+    );
     mugInner.position = new Vector3(-0.75, 0.895, -3.15);
     mugInner.material = this.pbr('mugCoffee', '#3a1f14', { roughness: 0.35 });
 
-    const succulentPot = CreateCylinder('succulentPot', { height: 0.1, diameterTop: 0.11, diameterBottom: 0.08, tessellation: 16 }, this.scene);
+    const succulentPot = CreateCylinder(
+      'succulentPot',
+      { height: 0.1, diameterTop: 0.11, diameterBottom: 0.08, tessellation: 16 },
+      this.scene,
+    );
     succulentPot.position = new Vector3(1.15, 0.79, -2.75);
     succulentPot.material = this.pbr('succulentPotMat', '#b96a4b', { roughness: 0.8 });
     const succulentLeaves: Mesh[] = [];
@@ -1813,14 +2252,28 @@ export class RoomScene {
       succulentLeaves.push(leaf);
     }
 
-    const phone = this.box('phone', { w: 0.09, h: 0.16, d: 0.012 }, new Vector3(0.52, 0.85, -3.05), this.pbr('phoneMat', '#0c0c14', { roughness: 0.25, metallic: 0.3 }));
+    const phone = this.box(
+      'phone',
+      { w: 0.09, h: 0.16, d: 0.012 },
+      new Vector3(0.52, 0.85, -3.05),
+      this.pbr('phoneMat', '#0c0c14', { roughness: 0.25, metallic: 0.3 }),
+    );
     phone.rotation.x = -0.18;
     phone.rotation.y = 0.5;
-    const phoneGlow = this.box('phoneGlow', { w: 0.076, h: 0.14, d: 0.002 }, new Vector3(0.52, 0.85, -3.05), this.emissive('phoneGlowMat', NEON_CYAN, 0.7));
+    const phoneGlow = this.box(
+      'phoneGlow',
+      { w: 0.076, h: 0.14, d: 0.002 },
+      new Vector3(0.52, 0.85, -3.05),
+      this.emissive('phoneGlowMat', NEON_CYAN, 0.7),
+    );
     phoneGlow.rotation.copyFrom(phone.rotation);
     phoneGlow.position.addInPlace(new Vector3(0, 0, 0.008));
 
-    const cable = CreateTorus('cable', { diameter: 0.14, thickness: 0.006, tessellation: 32 }, this.scene);
+    const cable = CreateTorus(
+      'cable',
+      { diameter: 0.14, thickness: 0.006, tessellation: 32 },
+      this.scene,
+    );
     cable.position = new Vector3(1.32, 0.79, -3.1);
     cable.rotation.x = Math.PI / 2.2;
     cable.material = this.pbr('cableMat', '#0a0a10', { roughness: 0.7 });
@@ -1831,39 +2284,171 @@ export class RoomScene {
       { c: '#e63946', y: 0.815, w: 0.26, d: 0.19 },
       { c: '#2a9d8f', y: 0.833, w: 0.24, d: 0.18 },
     ].forEach((b, i) => {
-      const nb = this.box('deskBook' + i, { w: b.w, h: 0.02, d: b.d }, new Vector3(-0.45, b.y, -2.8), this.pbr('deskBookMat' + i, b.c, { roughness: 0.7 }));
+      const nb = this.box(
+        'deskBook' + i,
+        { w: b.w, h: 0.02, d: b.d },
+        new Vector3(-0.45, b.y, -2.8),
+        this.pbr('deskBookMat' + i, b.c, { roughness: 0.7 }),
+      );
       nb.rotation.y = (i - 1) * 0.12;
       bookStack.push(nb);
     });
 
-    const lampArm = CreateCylinder('lampArm', { height: 0.5, diameter: 0.04, tessellation: 12 }, this.scene);
-    lampArm.position = new Vector3(-1.15, 1.0, -3.45);
-    lampArm.rotation.z = -0.5;
-    lampArm.material = metal;
-    const lampHead = CreateCylinder('lampHead', { height: 0.16, diameterTop: 0.12, diameterBottom: 0.26, tessellation: 18 }, this.scene);
-    lampHead.position = new Vector3(-0.98, 1.22, -3.45);
-    lampHead.rotation.z = -0.9;
+    // bola antiestrés amarilla con cara feliz, en el frente del escritorio
+    const stressBallR = 0.065;
+    const stressBallY = 0.775 + stressBallR;
+    const stressBallX = -0.85;
+    const stressBallZ = -2.7;
+    const stressBall = CreateSphere(
+      'stressBall',
+      { diameter: stressBallR * 2, segments: 24 },
+      this.scene,
+    );
+    stressBall.position = new Vector3(stressBallX, stressBallY, stressBallZ);
+    stressBall.material = this.pbr('stressBallMat', '#ffd23f', { roughness: 0.45 });
+    const stressFaceMat = this.pbr('stressFaceMat', '#ffffff', { roughness: 0.45 });
+    const stressFaceTex = this.texture(faceCanvas(), 1, -1);
+    stressFaceTex.wrapU = Texture.CLAMP_ADDRESSMODE;
+    stressFaceTex.wrapV = Texture.CLAMP_ADDRESSMODE;
+    stressFaceMat.albedoTexture = stressFaceTex;
+    const stressFace = this.pbr('stressFace', '#101014', { roughness: 0.35 });
+    const stressEyes: Mesh[] = [];
+    const faceR = stressBallR * 0.985;
+    [-1, 1].forEach((side) => {
+      const dirX = side * 0.38;
+      const dirY = 0.22;
+      const dirZ = Math.sqrt(Math.max(0, 1 - dirX * dirX - dirY * dirY));
+      const eye = CreateSphere('stressEye' + side, { diameter: 0.021, segments: 10 }, this.scene);
+      eye.position = new Vector3(
+        stressBallX + dirX * faceR,
+        stressBallY + dirY * faceR,
+        stressBallZ + dirZ * faceR,
+      );
+      eye.rotation.y = Math.atan2(dirX, dirZ);
+      eye.material = stressFace;
+      stressEyes.push(eye);
+    });
+    const smileGeo = CreateTorus(
+      'stressSmileGeo',
+      { diameter: 0.096, thickness: 0.011, tessellation: 40, arc: 0.5 },
+      this.scene,
+    );
+    const smilePositions = smileGeo.getVerticesData(VertexBuffer.PositionKind)!;
+    const cosArc = Math.cos(0.5 * Math.PI);
+    const sinArc = Math.sin(0.5 * Math.PI);
+    for (let i = 0; i < smilePositions.length; i += 3) {
+      if (smilePositions[i] < cosArc - 1e-5) smilePositions[i] = cosArc;
+      if (smilePositions[i + 1] < sinArc - 1e-5) smilePositions[i + 1] = sinArc;
+    }
+    smileGeo.updateVerticesData(VertexBuffer.PositionKind, smilePositions);
+    smileGeo.rotation.x = Math.PI / 2;
+    smileGeo.position = new Vector3(stressBallX, stressBallY - 0.016, stressBallZ + 0.038);
+    const smileR = 0.048;
+    const smile = this.warpToSphere(
+      smileGeo,
+      stressBallR * 0.99,
+      stressBallX,
+      stressBallY,
+      stressBallZ,
+      smileR,
+      0.5,
+    );
+    smile.material = stressFace;
+
+    // lámpara de escritorio articulada de dos brazos: base en el escritorio, al lado izquierdo del monitor
+    const lampBaseX = -1.32;
+    const lampZ = -3.0;
+    const lampFoot = CreateCylinder(
+      'lampFoot',
+      { height: 0.03, diameter: 0.18, tessellation: 20 },
+      this.scene,
+    );
+    lampFoot.position = new Vector3(lampBaseX, 0.79, lampZ);
+    lampFoot.material = metal;
+
+    // articulación en el plano XY (z fijo): base -> codo -> cuello del cabezal
+    // giro del cabezal: la boca del cono mira hacia +X (izquierda en pantalla) y algo hacia arriba
+    const headRotZ = 1.2;
+    const headCenter = { x: lampBaseX + 0.22, y: 1.19 };
+    const mouthDir = { x: Math.sin(headRotZ), y: -Math.cos(headRotZ) };
+    const lampP0 = { x: lampBaseX, y: 0.805 };
+    const lampP2 = {
+      x: headCenter.x - 0.08 * Math.sin(headRotZ),
+      y: headCenter.y + 0.08 * Math.cos(headRotZ),
+    };
+    // codo: justo por encima del cabezal, ligeramente hacia el borde derecho del escritorio
+    const lampP1 = { x: lampBaseX - 0.06, y: 1.27 };
+    const lampLink = (
+      name: string,
+      from: { x: number; y: number },
+      to: { x: number; y: number },
+    ) => {
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const link = CreateCylinder(
+        name,
+        { height: Math.hypot(dx, dy), diameter: 0.035, tessellation: 12 },
+        this.scene,
+      );
+      link.position = new Vector3((from.x + to.x) / 2, (from.y + to.y) / 2, lampZ);
+      link.rotation.z = Math.atan2(-dx, dy);
+      link.material = metal;
+      return link;
+    };
+    const lampArm = lampLink('lampArm', lampP0, lampP1);
+    const lampArm2 = lampLink('lampArm2', lampP1, lampP2);
+    const lampJoint = CreateSphere('lampJoint', { diameter: 0.06, segments: 10 }, this.scene);
+    lampJoint.position = new Vector3(lampP1.x, lampP1.y, lampZ);
+    lampJoint.material = metal;
+
+    const lampHead = CreateCylinder(
+      'lampHead',
+      { height: 0.16, diameterTop: 0.11, diameterBottom: 0.24, tessellation: 18 },
+      this.scene,
+    );
+    lampHead.position = new Vector3(headCenter.x, headCenter.y, lampZ);
+    lampHead.rotation.z = headRotZ;
     lampHead.material = metal;
-    const lampBulb = CreateSphere('lampBulb', { diameter: 0.12, segments: 12 }, this.scene);
-    lampBulb.position = new Vector3(-0.9, 1.18, -3.45);
+    // la bombilla se asienta dentro de la boca del cono (diámetro grande, bottom)
+    const lampBulb = CreateSphere('lampBulb', { diameter: 0.09, segments: 12 }, this.scene);
+    lampBulb.position = new Vector3(
+      headCenter.x + mouthDir.x * 0.055,
+      headCenter.y + mouthDir.y * 0.055,
+      lampZ,
+    );
     lampBulb.material = this.emissive('lampBulbMat', hex('#ffd9a0'), 1.6);
 
-    const lampLight = new SpotLight('lamp', new Vector3(-0.95, 1.2, -3.45), new Vector3(0.5, -1, 0.35), 0.9, 12, this.scene);
+    const lampLight = new SpotLight(
+      'lamp',
+      lampBulb.position.clone(),
+      new Vector3(mouthDir.x, mouthDir.y, 0.3),
+      0.9,
+      12,
+      this.scene,
+    );
     lampLight.diffuse = hex('#ffc88a');
     lampLight.intensity = 6;
-    lampLight.position = new Vector3(-0.95, 1.2, -3.45);
+    lampLight.position = lampBulb.position.clone();
     this.localLights.push(lampLight);
 
     const postitColors = ['#ffd166', '#ef476f', '#06d6a0'];
     const postits: Mesh[] = [];
 
-    const headsetBand = CreateTorus('hsBand', { diameter: 0.34, thickness: 0.05, tessellation: 24 }, this.scene);
+    const headsetBand = CreateTorus(
+      'hsBand',
+      { diameter: 0.34, thickness: 0.05, tessellation: 24 },
+      this.scene,
+    );
     headsetBand.position = new Vector3(0, 1.0, -3.35);
     headsetBand.rotation.x = Math.PI / 2.2;
     headsetBand.material = this.pbr('hsMat', '#141420', { roughness: 0.6 });
     const cups: Mesh[] = [];
     [-0.17, 0.17].forEach((dx, i) => {
-      const cup = CreateCylinder('hsCup' + i, { height: 0.08, diameter: 0.24, tessellation: 18 }, this.scene);
+      const cup = CreateCylinder(
+        'hsCup' + i,
+        { height: 0.08, diameter: 0.24, tessellation: 18 },
+        this.scene,
+      );
       cup.rotation.z = Math.PI / 2;
       cup.position = new Vector3(dx, 0.92, -3.35);
       cup.material = this.pbr('hsCupMat', '#1c1c2a', { roughness: 0.5 });
@@ -1871,20 +2456,48 @@ export class RoomScene {
     });
 
     postitColors.forEach((c, i) => {
-      const note = this.slab('postit' + i, 0.12, 0.12, 0.005, 0.01, new Vector3(1.15, 0.78, -3.3 + i * 0.12), this.pbr('postitMat' + i, c, { roughness: 1 }));
+      const note = this.slab(
+        'postit' + i,
+        0.12,
+        0.12,
+        0.005,
+        0.01,
+        new Vector3(1.15, 0.78, -3.3 + i * 0.12),
+        this.pbr('postitMat' + i, c, { roughness: 1 }),
+      );
       note.rotation.y = 0.2;
       postits.push(note);
     });
 
-    const papers = this.slab('papers', 0.34, 0.24, 0.012, 0.012, new Vector3(0.72, 0.781, -2.95), this.pbr('papersMat', '#e8e4d8', { roughness: 0.92 }));
+    const papers = this.slab(
+      'papers',
+      0.34,
+      0.24,
+      0.012,
+      0.012,
+      new Vector3(0.72, 0.781, -2.95),
+      this.pbr('papersMat', '#e8e4d8', { roughness: 0.92 }),
+    );
     papers.rotation.y = 0.35;
-    const papers2 = this.slab('papers2', 0.34, 0.24, 0.012, 0.012, new Vector3(0.7, 0.791, -2.97), this.pbr('papers2Mat', '#d9d3c3', { roughness: 0.92 }));
+    const papers2 = this.slab(
+      'papers2',
+      0.34,
+      0.24,
+      0.012,
+      0.012,
+      new Vector3(0.7, 0.791, -2.97),
+      this.pbr('papers2Mat', '#d9d3c3', { roughness: 0.92 }),
+    );
     papers2.rotation.y = 0.12;
 
     const penColors = ['#2b6fff', '#ff5c8a'];
     const pens: Mesh[] = [];
     [-0.03, 0.02].forEach((dx, i) => {
-      const pen = CreateCylinder('pen' + i, { height: 0.22, diameter: 0.014, tessellation: 10 }, this.scene);
+      const pen = CreateCylinder(
+        'pen' + i,
+        { height: 0.22, diameter: 0.014, tessellation: 10 },
+        this.scene,
+      );
       pen.position = new Vector3(-0.75 + dx, 0.95, -3.15 + (i ? 0.025 : -0.02));
       pen.rotation.z = 0.3 - i * 0.6;
       pen.rotation.x = i ? -0.25 : 0.2;
@@ -1912,7 +2525,13 @@ export class RoomScene {
       phoneGlow,
       cable,
       ...bookStack,
+      stressBall,
+      ...stressEyes,
+      smile,
+      lampFoot,
       lampArm,
+      lampArm2,
+      lampJoint,
       lampHead,
       lampBulb,
       headsetBand,
@@ -1939,82 +2558,116 @@ export class RoomScene {
     const pickables: Mesh[] = [];
 
     [0.4, 1.05, 1.7, 2.35].forEach((y, i) => {
-      const board = this.slab('shelfBoard' + i, 2.2, 0.5, 0.06, 0.03, new Vector3(x, y, -1.4), wood);
+      const board = this.slab(
+        'shelfBoard' + i,
+        2.2,
+        0.5,
+        0.06,
+        0.03,
+        new Vector3(x, y, -1.4),
+        wood,
+      );
       board.rotation.y = Math.PI / 2;
       board.bakeCurrentTransformIntoVertices();
       board.parent = shelf;
       pickables.push(board);
       if (i > 0) {
-        // tira LED bajo cada balda: cara visible + ligeras
+        // tira LED bajo el canto frontal de cada balda, por fuera de los libros
         const strip = this.box(
           'shelfStrip' + i,
-          { w: 0.025, h: 0.014, d: 1.9 },
-          new Vector3(x + 0.22, y - 0.042, -1.4),
+          { w: 0.02, h: 0.012, d: 1.9 },
+          new Vector3(x + 0.26, y - 0.05, -1.4),
           this.emissive('shelfStripMat', hex('#ffd9b0'), 1.3),
         );
         strip.parent = shelf;
       }
     });
-    this.box('shelfBack', { w: 0.08, h: 2.5, d: 2.3 }, new Vector3(x - 0.2, 1.35, -1.4), this.pbr('shelfBackMat', '#241a30', { roughness: 0.8 })).parent = shelf;
+    this.box(
+      'shelfBack',
+      { w: 0.08, h: 2.5, d: 2.3 },
+      new Vector3(x - 0.2, 1.35, -1.4),
+      this.pbr('shelfBackMat', '#241a30', { roughness: 0.8 }),
+    ).parent = shelf;
 
-    const bookColors = ['#e63946', '#457b9d', '#2a9d8f', '#f4a261', '#9b5de5', '#ff006e', '#3a86ff', '#ffb703'];
-    const bookMats = bookColors.map((c, i) => this.pbr('bookMat' + i, c, { roughness: 0.8 }));
-    const pageMat = this.pbr('bookPages', '#efe6d0', { roughness: 0.9 });
+    const bookColors = [
+      '#e63946',
+      '#457b9d',
+      '#2a9d8f',
+      '#f4a261',
+      '#9b5de5',
+      '#ff006e',
+      '#3a86ff',
+      '#ffb703',
+    ];
+    const bookMats = bookColors.map((c, i) => {
+      const mat = this.pbr('bookMat' + i, c, { roughness: 0.8 });
+      // tras el merge los libros pueden mostrar caras interiores: que nunca se vean huecos
+      mat.backFaceCulling = false;
+      return mat;
+    });
     const shelfHeights = [0.4, 1.05, 1.7, 2.35];
     for (let shelfIdx = 0; shelfIdx < shelfHeights.length; shelfIdx++) {
       const boardY = shelfHeights[shelfIdx];
       let offset = -0.82;
-      while (offset < 0.78) {
-        const thickness = 0.035 + Math.random() * 0.06;
-        const h = 0.26 + Math.random() * 0.16;
-        const depth = 0.24 + Math.random() * 0.06;
-        const colorIndex = (((shelfIdx * 3 + Math.floor(offset * 10)) % bookColors.length) + bookColors.length) % bookColors.length;
+      while (offset < (shelfIdx === 0 ? 0.68 : 0.78)) {
+        const thickness = 0.035 + Math.random() * 0.05;
+        const h = 0.3 + Math.random() * 0.16;
+        const depth = 0.16 + Math.random() * 0.05;
+        const colorIndex =
+          (((shelfIdx * 3 + Math.floor(offset * 10)) % bookColors.length) + bookColors.length) %
+          bookColors.length;
         const z = -1.4 + offset + thickness / 2;
         const book = this.box(
           `book-${shelfIdx}-${offset.toFixed(2)}`,
           { w: depth, h, d: thickness },
-          new Vector3(-3.86, boardY + h / 2 + 0.03, z),
+          new Vector3(-3.8, boardY + h / 2 + 0.03, z),
           bookMats[colorIndex],
         );
         book.rotation.z = (Math.random() - 0.5) * 0.1;
-        const pages = this.box(
-          `bookPages-${shelfIdx}-${offset.toFixed(2)}`,
-          { w: depth * 0.92, h: 0.012, d: thickness * 0.9 },
-          new Vector3(-3.86, boardY + h + 0.036, z),
-          pageMat,
-        );
-        pages.rotation.z = book.rotation.z;
         pickables.push(book);
         offset += thickness + 0.012;
       }
     }
 
-    const photo = posterCanvas(['DEV', 'LIFE'], '#1b1430', '#6cd0ff');
-    const frame = this.slab('shelfFrame', 0.3, 0.4, 0.03, 0.01, new Vector3(-3.86, 1.35, -2.28), this.pbr('frameMat', '#ffffff', { roughness: 0.8 }));
-    (frame.material as PBRMaterial).albedoTexture = this.texture(photo, 1, 1, false, true, false);
-    frame.rotation.y = Math.PI / 2;
-    frame.rotation.z = 0.06;
-
-    const clock = CreateCylinder('shelfClock', { height: 0.04, diameter: 0.26, tessellation: 28 }, this.scene);
+    const clock = CreateCylinder(
+      'shelfClock',
+      { height: 0.04, diameter: 0.26, tessellation: 28 },
+      this.scene,
+    );
     clock.rotation.z = Math.PI / 2;
     clock.position = new Vector3(-3.88, 2.14, -2.35);
     clock.material = this.pbr('clockMat', '#161428', { roughness: 0.4, metallic: 0.4 });
-    const clockFace = CreateCylinder('clockFace', { height: 0.012, diameter: 0.22, tessellation: 28 }, this.scene);
+    const clockFace = CreateCylinder(
+      'clockFace',
+      { height: 0.012, diameter: 0.22, tessellation: 28 },
+      this.scene,
+    );
     clockFace.rotation.z = Math.PI / 2;
     clockFace.position = new Vector3(-3.855, 2.14, -2.35);
     clockFace.material = this.emissive('clockFaceMat', hex('#dfe8ff'), 0.5);
 
     const lyingBooks: Mesh[] = [];
     [
-      { c: '#9b5de5', y: 0.44, w: 0.26, d: 0.2, x: -3.9, z: -0.5 },
-      { c: '#f4a261', y: 0.46, w: 0.24, d: 0.18, x: -3.9, z: -0.5 },
+      { c: '#9b5de5', y: 0.4425, w: 0.26, d: 0.2, x: -3.9, z: -0.47 },
+      { c: '#f4a261', y: 0.4635, w: 0.24, d: 0.18, x: -3.9, z: -0.47 },
     ].forEach((b, i) => {
-      const lb = this.box('lyingBook' + i, { w: b.d, h: 0.02, d: b.w }, new Vector3(b.x, b.y, b.z), this.pbr('lyingBookMat' + i, b.c, { roughness: 0.85 }));
+      const lyingMat = this.pbr('lyingBookMat' + i, b.c, { roughness: 0.85 });
+      lyingMat.backFaceCulling = false;
+      const lb = this.box(
+        'lyingBook' + i,
+        { w: b.d, h: 0.02, d: b.w },
+        new Vector3(b.x, b.y, b.z),
+        lyingMat,
+      );
       lb.rotation.y = 0.15 * (i ? -1 : 1);
       lyingBooks.push(lb);
     });
 
-    const shelfCandle = CreateCylinder('shelfCandle', { height: 0.18, diameterTop: 0.06, diameterBottom: 0.06, tessellation: 16 }, this.scene);
+    const shelfCandle = CreateCylinder(
+      'shelfCandle',
+      { height: 0.18, diameterTop: 0.06, diameterBottom: 0.06, tessellation: 16 },
+      this.scene,
+    );
     shelfCandle.position = new Vector3(-3.86, 1.82, -2.3);
     shelfCandle.material = this.pbr('candleMat', '#e8d8b0', { roughness: 0.85 });
     const candleFlame = CreateSphere('candleFlame', { diameter: 0.05, segments: 8 }, this.scene);
@@ -2022,26 +2675,70 @@ export class RoomScene {
     candleFlame.position = new Vector3(-3.86, 1.95, -2.3);
     candleFlame.material = this.emissive('flameMat', hex('#ffb347'), 1.8);
 
-    const globeStand = CreateCylinder('globeStand', { height: 0.06, diameter: 0.16, tessellation: 18 }, this.scene);
-    globeStand.position = new Vector3(-3.86, 0.43, 0.3);
-    globeStand.material = this.pbr('globeStandMat', '#3a2f1f', { roughness: 0.6 });
-    const globe = CreateSphere('globe', { diameter: 0.24, segments: 24 }, this.scene);
-    globe.position = new Vector3(-3.86, 0.58, 0.3);
-    globe.material = this.pbr('globeMat', '#2a5d8f', { roughness: 0.5 });
+    // globo terráqueo en el frente de la segunda balda (a la altura de los ojos, bien visible)
+    const globeX = -3.9;
+    const globeZ = -0.43;
+    const globeFoot = CreateCylinder(
+      'globeStand',
+      { height: 0.02, diameter: 0.15, tessellation: 20 },
+      this.scene,
+    );
+    globeFoot.position = new Vector3(globeX, 1.09, globeZ);
+    globeFoot.material = this.pbr('globeStandMat', '#3a2f1f', { roughness: 0.55, metallic: 0.15 });
+    const globePost = CreateCylinder(
+      'globePost',
+      { height: 0.11, diameter: 0.022, tessellation: 10 },
+      this.scene,
+    );
+    globePost.position = new Vector3(globeX, 1.15, globeZ);
+    globePost.material = this.pbr('globePostMat', '#6b4f2a', { roughness: 0.45, metallic: 0.35 });
+    const globeRing = CreateTorus(
+      'globeRing',
+      { diameter: 0.25, thickness: 0.008, tessellation: 32 },
+      this.scene,
+    );
+    globeRing.rotation.x = Math.PI / 2;
+    globeRing.rotation.z = 0.35;
+    globeRing.position = new Vector3(globeX, 1.325, globeZ);
+    globeRing.material = this.pbr('globeRingMat', '#c9a86a', { roughness: 0.3, metallic: 0.8 });
+    const globe = CreateSphere('globe', { diameter: 0.22, segments: 28 }, this.scene);
+    globe.position = new Vector3(globeX, 1.325, globeZ);
+    const globeMat = this.pbr('globeMat', '#ffffff', { roughness: 0.45, metallic: 0.1 });
+    globeMat.albedoTexture = this.texture(globeCanvas(), 1, 1);
+    globeMat.emissiveTexture = globeMat.albedoTexture;
+    globeMat.emissiveColor = hex('#c8dceb');
+    globeMat.emissiveIntensity = 0.22;
+    globe.material = globeMat;
     globe.rotation.z = -0.4;
 
-    const trophyStem = CreateCylinder('trophyStem', { height: 0.16, diameter: 0.05, tessellation: 12 }, this.scene);
+    const trophyStem = CreateCylinder(
+      'trophyStem',
+      { height: 0.16, diameter: 0.05, tessellation: 12 },
+      this.scene,
+    );
     trophyStem.position = new Vector3(x, 1.78, -0.55);
     trophyStem.material = this.emissive('goldMat', hex('#ffcf5c'), 0.8);
-    const trophyCup = CreateCylinder('trophyCup', { height: 0.18, diameterTop: 0.18, diameterBottom: 0.08, tessellation: 16 }, this.scene);
+    const trophyCup = CreateCylinder(
+      'trophyCup',
+      { height: 0.18, diameterTop: 0.18, diameterBottom: 0.08, tessellation: 16 },
+      this.scene,
+    );
     trophyCup.position = new Vector3(x, 1.93, -0.55);
     trophyCup.material = this.emissive('goldMat2', hex('#ffcf5c'), 0.8);
 
-    const plantPot = CreateCylinder('plantPot', { height: 0.24, diameterTop: 0.22, diameterBottom: 0.16, tessellation: 18 }, this.scene);
+    const plantPot = CreateCylinder(
+      'plantPot',
+      { height: 0.24, diameterTop: 0.22, diameterBottom: 0.16, tessellation: 18 },
+      this.scene,
+    );
     plantPot.position = new Vector3(x, 2.5, -2.2);
     plantPot.material = this.pbr('potMat', '#8a5a44', { roughness: 0.9 });
     for (let i = 0; i < 5; i++) {
-      const leaf = CreateSphere('sLeaf' + i, { diameter: 0.12 + Math.random() * 0.1, segments: 16 }, this.scene);
+      const leaf = CreateSphere(
+        'sLeaf' + i,
+        { diameter: 0.12 + Math.random() * 0.1, segments: 16 },
+        this.scene,
+      );
       leaf.position = new Vector3(x, 2.66 + i * 0.07, -2.2 + (Math.random() - 0.5) * 0.2);
       leaf.rotation.z = (Math.random() - 0.5) * 0.6;
       leaf.scaling.y = 1.6;
@@ -2049,13 +2746,14 @@ export class RoomScene {
     }
 
     pickables.push(
-      frame,
       clock,
       clockFace,
       shelfCandle,
       candleFlame,
       globe,
-      globeStand,
+      globeFoot,
+      globePost,
+      globeRing,
       trophyStem,
       trophyCup,
       plantPot,
@@ -2069,25 +2767,82 @@ export class RoomScene {
   }
 
   private buildTv(): void {
-    const x = 3.7;
     const tvZ = -1.7;
-    const dvdZ = -0.75;
+    const rackZ = -1.5;
 
     const cabinetSrc = woodCanvas();
     const cabinetMat = this.pbr('mediaCabinet', '#ffffff', { roughness: 0.5 });
     cabinetMat.albedoTexture = this.texture(cabinetSrc, 1.5, 1);
     this.bump(cabinetMat, cabinetSrc, 1.5, 1, 3.5);
-    const metal = this.pbr('tvMetal', '#26242f', { roughness: 0.3, metallic: 0.7 });
-    const plastic = this.pbr('tvPlastic', '#2a2320', { roughness: 0.55, metallic: 0.05 });
-    const rackMat = this.pbr('discRack', '#1a1424', { roughness: 0.6, metallic: 0.2 });
+    const metal = this.pbr('tvMetal', '#8d8799', { roughness: 0.32, metallic: 0.45 });
+    const plastic = this.pbr('tvPlastic', '#575364', { roughness: 0.45, metallic: 0.08 });
+    const panelMat = this.pbr('tvPanel', '#16141d', { roughness: 0.9 });
+    const frameMat = this.pbr('tvFrame', '#9a94a6', { roughness: 0.34, metallic: 0.32 });
+    const deckMat = this.pbr('discDeck', '#8b8697', { roughness: 0.36, metallic: 0.32 });
+    const deckFaceMat = this.pbr('discDeckFace', '#b7b2c2', { roughness: 0.28, metallic: 0.24 });
+    const platterMat = this.pbr('discPlatter', '#0b0a11', { roughness: 0.85 });
+    const rackWoodDark = this.pbr('discRackDark', '#5a4232', { roughness: 0.72 });
+    const rackWoodLight = this.pbr('discRackWood', '#c49a6a', { roughness: 0.55 });
 
-    this.slab('mediaCabinet', 0.9, 2.2, 0.7, 0.06, new Vector3(x, 0.35, -1.5), cabinetMat);
-    this.box('cabinetSeam', { w: 0.02, h: 0.5, d: 0.02 }, new Vector3(3.26, 0.35, -1.5), metal);
+    // mueble: tapa superior en y=0.70, x 3.25..4.15, z -2.6..-0.4
+    this.slab('mediaCabinet', 0.9, 2.2, 0.7, 0.06, new Vector3(3.7, 0.35, -1.5), cabinetMat);
+    // junta frontal: sobresale del mueble para no ser coplanar con su cara
+    this.box('cabinetSeam', { w: 0.012, h: 0.5, d: 0.02 }, new Vector3(3.247, 0.35, -1.5), metal);
 
     const tvPickables: Mesh[] = [];
 
-    const tvBody = this.box('tvBody', { w: 0.68, h: 0.68, d: 0.9 }, new Vector3(x + 0.08, 1.03, tvZ), plastic);
-    const tvBezel = this.box('tvBezel', { w: 0.052, h: 0.66, d: 0.84 }, new Vector3(3.452, 1.03, tvZ), metal);
+    // ── TV de tubo ─────────────────────────────────────────────────────────────
+    // capas, de la pared al espectador: carcasa → cuello → panel oscuro → pantalla → marco.
+    // Así no queda ninguna cámara hueca y la pantalla nunca queda tapada.
+    const tvBody = this.box(
+      'tvBody',
+      { w: 0.44, h: 0.86, d: 1.02 },
+      new Vector3(3.85, 1.12, tvZ),
+      plastic,
+    );
+    // halo tenue pegado a la pared: separa la silueta del televisor del muro oscuro
+    const bias = CreatePlane('tvBias', { width: 1.14, height: 0.98 }, this.scene);
+    bias.rotation.y = Math.PI / 2;
+    bias.position.copyFrom(new Vector3(4.085, 1.12, tvZ));
+    bias.material = this.emissive('tvBiasMat', NEON_CYAN, 0.38);
+    // el "cuello" rellena el frente del tubo hasta el marco: sin cámara hueca por los costados
+    this.box('tvNeck', { w: 0.2, h: 0.74, d: 0.9 }, new Vector3(3.76, 1.14, tvZ), plastic);
+    // panel oscuro interno: detrás de la pantalla, actuará de marco interior del tubo
+    this.box(
+      'tvScreenPanel',
+      { w: 0.02, h: 0.66, d: 0.78 },
+      new Vector3(3.655, 1.14, tvZ),
+      panelMat,
+    );
+    // marco frontal en 4 barras que sobresale por delante de todo
+    const frameX = 3.575;
+    const frameW = 0.11;
+    const bars = [
+      this.box(
+        'tvFrameTop',
+        { w: frameW, h: 0.11, d: 0.92 },
+        new Vector3(frameX, 1.475, tvZ),
+        frameMat,
+      ),
+      this.box(
+        'tvFrameBottom',
+        { w: frameW, h: 0.11, d: 0.92 },
+        new Vector3(frameX, 0.805, tvZ),
+        frameMat,
+      ),
+      this.box(
+        'tvFrameLeft',
+        { w: frameW, h: 0.56, d: 0.11 },
+        new Vector3(frameX, 1.14, -2.105),
+        frameMat,
+      ),
+      this.box(
+        'tvFrameRight',
+        { w: frameW, h: 0.56, d: 0.11 },
+        new Vector3(frameX, 1.14, -1.295),
+        frameMat,
+      ),
+    ];
 
     const screenMat = new PBRMaterial('tvScreenMat', this.scene);
     screenMat.albedoColor = Color3.Black();
@@ -2100,49 +2855,361 @@ export class RoomScene {
     screenMat.clearCoat.intensity = 1;
     screenMat.clearCoat.roughness = 0.1;
     this.tvScreenMat = screenMat;
-    const screenMesh = this.box('tvScreen', { w: 0.72, h: 0.54, d: 0.022 }, new Vector3(3.435, 1.03, tvZ), screenMat);
-    screenMesh.rotation.y = -Math.PI / 2;
+    // pantalla: por delante del panel oscuro y justo detrás del marco (nunca tapada)
+    const screenMesh = CreatePlane('tvScreen', { width: 0.72, height: 0.58 }, this.scene);
+    screenMesh.rotation.y = Math.PI / 2;
+    screenMesh.position.copyFrom(new Vector3(3.635, 1.14, tvZ));
+    screenMesh.material = screenMat;
     this.setScreen(null);
 
-    tvPickables.push(tvBody, tvBezel, screenMesh);
+    // piloto de encendido en la barra inferior
+    this.box(
+      'tvPowerLed',
+      { w: 0.012, h: 0.018, d: 0.022 },
+      new Vector3(3.522, 0.805, -1.3),
+      this.emissive('tvPowerLedMat', NEON_CYAN, 1.2),
+    );
 
-    [0.86, 1.14].forEach((y, i) => {
-      const knob = CreateCylinder('tvKnob' + i, { height: 0.04, diameter: 0.05, tessellation: 16 }, this.scene);
+    tvPickables.push(tvBody, screenMesh, ...bars);
+
+    [0.98, 1.26].forEach((y, i) => {
+      const knob = CreateCylinder(
+        'tvKnob' + i,
+        { height: 0.04, diameter: 0.045, tessellation: 16 },
+        this.scene,
+      );
       knob.rotation.z = Math.PI / 2;
-      knob.position = new Vector3(3.42, y, tvZ - 0.39);
+      knob.position = new Vector3(3.515, y, -2.105);
       knob.material = metal;
       tvPickables.push(knob);
     });
 
-    this.box('dvdBody', { w: 0.5, h: 0.1, d: 0.7 }, new Vector3(x, 0.76, dvdZ), metal);
-    this.box('dvdSlot', { w: 0.02, h: 0.02, d: 0.5 }, new Vector3(3.44, 0.78, dvdZ), this.pbr('dvdSlotMat', '#05060a', { roughness: 1 }));
-    this.box('dvdLed', { w: 0.01, h: 0.05, d: 0.12 }, new Vector3(3.44, 0.76, dvdZ + 0.24), this.emissive('dvdLedMat', NEON_CYAN, 1.2));
-
-    const speakerMat = this.pbr('speakerMat', '#17141f', { roughness: 0.6 });
-    [-2.35, -1.15].forEach((z, i) => {
-      this.box('speaker' + i, { w: 0.18, h: 0.36, d: 0.1 }, new Vector3(3.7, 0.88, z), speakerMat);
-      const ring = CreateTorus('spkRing' + i, { diameter: 0.09, thickness: 0.012, tessellation: 24 }, this.scene);
-      ring.rotation.z = Math.PI / 2;
-      ring.position = new Vector3(3.6, 0.88, z);
-      ring.material = metal;
+    // ── reproductor de discos: caja nativa de Babylon (caras y UV correctas) ──
+    // cuerpo sólido 0.70..0.86 sobre la tapa del mueble
+    const deckBody = CreateBox(
+      'discDeckBase',
+      { width: 0.46, height: 0.16, depth: 0.5 },
+      this.scene,
+    );
+    deckBody.position.copyFrom(new Vector3(3.72, 0.78, -0.82));
+    deckBody.material = deckMat;
+    // frente con relieve: bandeja que sobresale en la cara frontal (z mayor hacia cámara)
+    const deckFace = CreateBox(
+      'discDeckFace',
+      { width: 0.44, height: 0.12, depth: 0.03 },
+      this.scene,
+    );
+    deckFace.position.copyFrom(new Vector3(3.72, 0.775, -0.565));
+    deckFace.material = deckFaceMat;
+    // laterales con relieve
+    [-1, 1].forEach((side) => {
+      const trim = CreateBox(
+        'discDeckTrim' + side,
+        { width: 0.03, height: 0.12, depth: 0.48 },
+        this.scene,
+      );
+      trim.position.copyFrom(new Vector3(3.72 + side * 0.225, 0.775, -0.82));
+      trim.material = deckFaceMat;
     });
+    // plato en la cara superior, con aire suficiente (sin z-fighting)
+    const platter = CreateCylinder(
+      'discPlatter',
+      { height: 0.012, diameter: 0.3, tessellation: 44 },
+      this.scene,
+    );
+    platter.position = new Vector3(3.72, 0.866, -0.82);
+    platter.material = platterMat;
+    const hub = CreateCylinder(
+      'discHub',
+      { height: 0.016, diameter: 0.052, tessellation: 20 },
+      this.scene,
+    );
+    hub.position = new Vector3(3.72, 0.874, -0.82);
+    hub.material = metal;
+    // botonera LED frontal, embutida en la bandeja
+    this.box(
+      'discDeckLed',
+      { w: 0.06, h: 0.014, d: 0.012 },
+      new Vector3(3.9, 0.802, -0.55),
+      this.emissive('discDeckLedMat', NEON_CYAN, 1.4),
+    );
 
-    const rackZ = -1.5;
-    this.box('discRack', { w: 0.06, h: 1.2, d: 2.4 }, new Vector3(4.12, 2.0, rackZ), rackMat);
-    for (let r = 0; r <= RACK_ROWS; r++) {
-      this.box('rackRow' + r, { w: 0.1, h: 0.02, d: 2.4 }, new Vector3(4.08, RACK_TOP_Y + DISC_RADIUS + 0.04 - r * RACK_ROW_GAP, rackZ), metal);
-    }
+    // ── estantería de discos sobre la TV: fondo claro para que los discos se vean ──
+    this.box(
+      'discRackBack',
+      { w: 0.03, h: 1.04, d: 1.94 },
+      new Vector3(4.08, 2.14, rackZ),
+      rackWoodDark,
+    );
+    this.box(
+      'discRackSideL',
+      { w: 0.235, h: 1.04, d: 0.03 },
+      new Vector3(3.975, 2.14, -2.47),
+      rackWoodDark,
+    );
+    this.box(
+      'discRackSideR',
+      { w: 0.235, h: 1.04, d: 0.03 },
+      new Vector3(3.975, 2.14, -0.53),
+      rackWoodDark,
+    );
+    this.box(
+      'discRackFloor',
+      { w: 0.235, h: 0.03, d: 1.94 },
+      new Vector3(3.975, 1.69, rackZ),
+      rackWoodLight,
+    );
+    [2.305, 2.005].forEach((y, i) => {
+      this.box(
+        'discShelf' + i,
+        { w: 0.235, h: 0.03, d: 1.94 },
+        new Vector3(3.975, y, rackZ),
+        rackWoodLight,
+      );
+    });
+    this.box(
+      'discRackTop',
+      { w: 0.235, h: 0.03, d: 1.94 },
+      new Vector3(3.975, 2.63, rackZ),
+      rackWoodLight,
+    );
+    // topes frontales: recortados en z para no cruzar los discos de las columnas extremas
+    [2.32, 2.02, 1.72].forEach((y, i) => {
+      this.box(
+        'discLip' + i,
+        { w: 0.02, h: 0.03, d: 1.7 },
+        new Vector3(3.872, y, rackZ),
+        rackWoodLight,
+      );
+    });
+    this.box(
+      'discRackLed',
+      { w: 0.012, h: 0.008, d: 1.9 },
+      new Vector3(3.868, 2.612, rackZ),
+      this.emissive('discRackLedMat', NEON_CYAN, 0.8),
+    );
 
-    const tvLight = new PointLight('tvGlow', new Vector3(3.1, 1.4, tvZ), this.scene);
+    const tvLight = new PointLight('tvGlow', new Vector3(3.05, 1.32, tvZ), this.scene);
     tvLight.diffuse = NEON_CYAN;
-    tvLight.intensity = 2.5;
+    tvLight.intensity = 2.2;
     tvLight.range = 4.5;
     this.localLights.push(tvLight);
+    // luz frontal dedicada al lector: evita que frente y laterales caigan en sombra
+    const deckLight = new PointLight('deckGlow', new Vector3(3.1, 0.95, -0.35), this.scene);
+    deckLight.diffuse = hex('#e8e4f5');
+    deckLight.intensity = 1.5;
+    deckLight.range = 2.6;
+    this.localLights.push(deckLight);
+    const rackLight = new PointLight('rackGlow', new Vector3(3.45, 2.25, rackZ), this.scene);
+    rackLight.diffuse = hex('#ffe6c6');
+    rackLight.intensity = 2.1;
+    rackLight.range = 3.0;
+    this.localLights.push(rackLight);
 
     tvPickables.forEach((mesh) => {
       mesh.metadata = { hotspotId: 'tv' as HotspotId };
     });
     this.interiorPickable.set('tv', tvPickables);
+
+    this.buildGamepads();
+  }
+
+  private buildGamepads(): void {
+    const bodyMat = this.pbr('padBody', '#26222f', { roughness: 0.5 });
+    const darkMat = this.pbr('padDark', '#0d0c12', { roughness: 0.45 });
+
+    // al frente de la TV, lado a lado sobre la tapa del mueble
+    const demo = this.buildPad(
+      'padDemo',
+      'demo',
+      new Vector3(3.42, 0.702, -1.35),
+      -0.12,
+      bodyMat,
+      darkMat,
+      NEON_CYAN,
+    );
+    this.demoPadLed = demo.led;
+    this.demoPadRing = demo.ring;
+    const repo = this.buildPad(
+      'padRepo',
+      'repo',
+      new Vector3(3.42, 0.702, -1.75),
+      0.16,
+      bodyMat,
+      darkMat,
+      NEON_PINK,
+    );
+    this.repoPadLed = repo.led;
+    this.repoPadRing = repo.ring;
+    this.refreshPadLeds();
+  }
+
+  private buildPad(
+    name: string,
+    pad: PadLink,
+    pos: Vector3,
+    rotY: number,
+    bodyMat: PBRMaterial,
+    darkMat: PBRMaterial,
+    accent: Color3,
+  ): { led: PBRMaterial; ring: PBRMaterial } {
+    const s = 1.7;
+    const root = new TransformNode(name, this.scene);
+    root.position.copyFrom(pos);
+    root.rotation.y = rotY;
+    this.padRoots.push(root);
+
+    const led = this.emissive(name + 'Led', accent, 0.12);
+    const ring = this.emissive(name + 'Ring', accent, 0.08);
+    const attach = (mesh: Mesh, mat: PBRMaterial): void => {
+      mesh.material = mat;
+      mesh.parent = root;
+      mesh.metadata = { padLink: pad };
+    };
+
+    // anillo en el suelo: resalta el mando cuando tiene demo/repo
+    const halo = CreateTorus(
+      name + 'Halo',
+      { diameter: 0.27, thickness: 0.007, tessellation: 48 },
+      this.scene,
+    );
+    halo.position = new Vector3(0, 0.004, 0);
+    attach(halo, ring);
+
+    // cuerpo y grips laterales
+    attach(
+      this.box(
+        name + 'Body',
+        { w: 0.09 * s, h: 0.034 * s, d: 0.12 * s },
+        new Vector3(0, 0.017 * s, 0),
+        bodyMat,
+      ),
+      bodyMat,
+    );
+    [1, -1].forEach((side) => {
+      const grip = CreateCylinder(
+        name + 'Grip' + side,
+        { height: 0.03 * s, diameter: 0.03 * s, tessellation: 12 },
+        this.scene,
+      );
+      grip.position = new Vector3(0.008 * s, 0.012 * s, side * 0.05 * s);
+      grip.rotation.x = side * 0.4;
+      attach(grip, bodyMat);
+    });
+
+    // cruceta (lado -Z) y botones LED (lado +Z), elevados sobre la tapa del cuerpo
+    attach(
+      this.box(
+        name + 'DpadH',
+        { w: 0.024 * s, h: 0.008 * s, d: 0.01 * s },
+        new Vector3(-0.008 * s, 0.04 * s, -0.032 * s),
+        darkMat,
+      ),
+      darkMat,
+    );
+    attach(
+      this.box(
+        name + 'DpadV',
+        { w: 0.01 * s, h: 0.008 * s, d: 0.024 * s },
+        new Vector3(-0.008 * s, 0.04 * s, -0.032 * s),
+        darkMat,
+      ),
+      darkMat,
+    );
+    [0.024, 0.042].forEach((z, i) => {
+      const btn = CreateCylinder(
+        name + 'Btn' + i,
+        { height: 0.008 * s, diameter: 0.014 * s, tessellation: 16 },
+        this.scene,
+      );
+      btn.position = new Vector3(-0.008 * s, 0.04 * s, z * s);
+      attach(btn, led);
+    });
+    // botón central tipo "start"
+    attach(
+      this.box(
+        name + 'Center',
+        { w: 0.013 * s, h: 0.006 * s, d: 0.006 * s },
+        new Vector3(0.017 * s, 0.039 * s, 0),
+        darkMat,
+      ),
+      darkMat,
+    );
+
+    return { led, ring };
+  }
+
+  private setPadsProject(project: DiscProject | null): void {
+    this.padsProject = project;
+    this.refreshPadLeds();
+  }
+
+  private refreshPadLeds(): void {
+    const demoOn = !!this.padsProject?.demoUrl;
+    const repoOn = !!this.padsProject?.repoUrl;
+    if (this.demoPadLed) {
+      this.demoPadLed.emissiveIntensity = demoOn ? 2.6 : 0.08;
+    }
+    if (this.repoPadLed) {
+      this.repoPadLed.emissiveIntensity = repoOn ? 2.6 : 0.08;
+    }
+    if (this.demoPadRing) {
+      this.demoPadRing.emissiveIntensity = demoOn ? 1.8 : 0.04;
+    }
+    if (this.repoPadRing) {
+      this.repoPadRing.emissiveIntensity = repoOn ? 1.8 : 0.04;
+    }
+  }
+
+  // pulso suave: demo/repo disponibles respiran; el hover los enciende del todo
+  private updatePads(): void {
+    const pulse = 0.5 + 0.5 * Math.sin(this.elapsed * 2.2);
+    const demoOn = !!this.padsProject?.demoUrl;
+    const repoOn = !!this.padsProject?.repoUrl;
+    const apply = (
+      led: PBRMaterial | undefined,
+      ring: PBRMaterial | undefined,
+      on: boolean,
+      hovered: boolean,
+    ): void => {
+      if (led) {
+        led.emissiveIntensity = on ? 2.4 + pulse * 1.4 : 0.08;
+        if (hovered) {
+          led.emissiveIntensity = 5.5;
+        }
+      }
+      if (ring) {
+        ring.emissiveIntensity = on ? 1.6 + pulse * 1.0 : 0.04;
+        if (hovered) {
+          ring.emissiveIntensity = 4.5;
+        }
+      }
+    };
+    apply(this.demoPadLed, this.demoPadRing, demoOn, this.hoveredPad === 'demo');
+    apply(this.repoPadLed, this.repoPadRing, repoOn, this.hoveredPad === 'repo');
+  }
+
+  private isPadPickable(pad: PadLink): boolean {
+    if (this.phase === 'intro' || this.phase === 'entering' || this.consoleOpen) {
+      return false;
+    }
+    const project = this.padsProject;
+    if (!project) {
+      return false;
+    }
+    return pad === 'demo' ? !!project.demoUrl : !!project.repoUrl;
+  }
+
+  private openPadLink(pad: PadLink): void {
+    const url = pad === 'demo' ? this.padsProject?.demoUrl : this.padsProject?.repoUrl;
+    if (!url) {
+      return;
+    }
+    try {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch {
+      // popup bloqueado: ignorar
+    }
   }
 
   private buildChair(): void {
@@ -2166,7 +3233,11 @@ export class RoomScene {
       leg.material = darkMetal;
       leg.parent = root;
 
-      const wheel = CreateCylinder('chairWheel' + i, { height: 0.03, diameter: 0.08, tessellation: 16 }, this.scene);
+      const wheel = CreateCylinder(
+        'chairWheel' + i,
+        { height: 0.03, diameter: 0.08, tessellation: 16 },
+        this.scene,
+      );
       wheel.rotation.y = -a;
       wheel.rotation.x = Math.PI / 2;
       wheel.position = new Vector3(Math.cos(a) * 0.47, 0.04, Math.sin(a) * 0.47);
@@ -2174,17 +3245,29 @@ export class RoomScene {
       wheel.parent = root;
     }
 
-    const hub = CreateCylinder('chairHub', { height: 0.05, diameter: 0.14, tessellation: 20 }, this.scene);
+    const hub = CreateCylinder(
+      'chairHub',
+      { height: 0.05, diameter: 0.14, tessellation: 20 },
+      this.scene,
+    );
     hub.position = new Vector3(0, 0.05, 0);
     hub.material = darkMetal;
     hub.parent = root;
 
-    const sleeve = CreateCylinder('chairSleeve', { height: 0.18, diameter: 0.14, tessellation: 18 }, this.scene);
+    const sleeve = CreateCylinder(
+      'chairSleeve',
+      { height: 0.18, diameter: 0.14, tessellation: 18 },
+      this.scene,
+    );
     sleeve.position = new Vector3(0, 0.15, 0);
     sleeve.material = fabric;
     sleeve.parent = root;
 
-    const piston = CreateCylinder('chairPiston', { height: 0.32, diameter: 0.062, tessellation: 16 }, this.scene);
+    const piston = CreateCylinder(
+      'chairPiston',
+      { height: 0.32, diameter: 0.062, tessellation: 16 },
+      this.scene,
+    );
     piston.position = new Vector3(0, 0.28, 0);
     piston.material = chrome;
     piston.parent = root;
@@ -2271,21 +3354,54 @@ export class RoomScene {
     const roomPosters: { skill: SkillLogo; w: number; h: number; pos: Vector3; rotY: number }[] = [
       { skill: roomSkills[0], w: 0.6, h: 0.8, pos: new Vector3(3.35, 1.7, -4.14), rotY: Math.PI },
       { skill: roomSkills[1], w: 0.5, h: 0.7, pos: new Vector3(-2.6, 2.05, -4.14), rotY: Math.PI },
-      { skill: roomSkills[2], w: 0.5, h: 0.7, pos: new Vector3(-4.14, 1.55, 0.4), rotY: -Math.PI / 2 },
-      { skill: roomSkills[3], w: 0.5, h: 0.7, pos: new Vector3(-4.14, 1.55, 2.9), rotY: -Math.PI / 2 },
-      { skill: roomSkills[4], w: 0.55, h: 0.75, pos: new Vector3(4.14, 1.75, 2.8), rotY: Math.PI / 2 },
-      { skill: roomSkills[5], w: 0.5, h: 0.7, pos: new Vector3(4.14, 1.75, 0.2), rotY: Math.PI / 2 },
+      {
+        skill: roomSkills[2],
+        w: 0.5,
+        h: 0.7,
+        pos: new Vector3(-4.14, 1.55, 0.4),
+        rotY: -Math.PI / 2,
+      },
+      {
+        skill: roomSkills[3],
+        w: 0.5,
+        h: 0.7,
+        pos: new Vector3(-4.14, 1.55, 2.9),
+        rotY: -Math.PI / 2,
+      },
+      {
+        skill: roomSkills[4],
+        w: 0.55,
+        h: 0.75,
+        pos: new Vector3(4.14, 1.75, 2.8),
+        rotY: Math.PI / 2,
+      },
+      {
+        skill: roomSkills[5],
+        w: 0.5,
+        h: 0.7,
+        pos: new Vector3(4.14, 1.75, 0.2),
+        rotY: Math.PI / 2,
+      },
     ];
     roomPosters.forEach((p, i) => {
       this.addPoster(`roomPoster${i}`, p.skill, p.w, p.h, p.pos, p.rotY);
     });
 
-    const ring = CreateTorus('neonRing', { diameter: 1.5, thickness: 0.045, tessellation: 48 }, this.scene);
+    const ring = CreateTorus(
+      'neonRing',
+      { diameter: 1.5, thickness: 0.045, tessellation: 48 },
+      this.scene,
+    );
     ring.position = new Vector3(2.1, 2.1, -3.9);
     ring.rotation.x = Math.PI / 2;
     ring.material = this.emissive('neonRingMat', NEON_PURPLE, 1.8);
 
-    const ledStrip = this.box('ledStrip', { w: 5.2, h: 0.04, d: 0.03 }, new Vector3(0, 2.55, -3.9), this.emissive('ledMat', NEON_PINK, 1.3));
+    const ledStrip = this.box(
+      'ledStrip',
+      { w: 5.2, h: 0.04, d: 0.03 },
+      new Vector3(0, 2.55, -3.9),
+      this.emissive('ledMat', NEON_PINK, 1.3),
+    );
     ledStrip.scaling.x = 1;
 
     const ledLight = new PointLight('led', new Vector3(0, 2.4, -3.4), this.scene);
@@ -2313,18 +3429,34 @@ export class RoomScene {
 
     const woodDeco = this.pbr('decoWood', '#3a2b1f', { roughness: 0.7 });
 
-    const floorPot = CreateCylinder('floorPot', { height: 0.5, diameterTop: 0.44, diameterBottom: 0.34, tessellation: 24 }, this.scene);
+    const floorPot = CreateCylinder(
+      'floorPot',
+      { height: 0.5, diameterTop: 0.44, diameterBottom: 0.34, tessellation: 24 },
+      this.scene,
+    );
     floorPot.position = new Vector3(-3.5, 0.25, -3.55);
     floorPot.material = this.pbr('floorPotMat', '#8a5a44', { roughness: 0.85 });
-    const floorStem = CreateCylinder('floorStem', { height: 0.9, diameter: 0.06, tessellation: 10 }, this.scene);
+    const floorStem = CreateCylinder(
+      'floorStem',
+      { height: 0.9, diameter: 0.06, tessellation: 10 },
+      this.scene,
+    );
     floorStem.position = new Vector3(-3.5, 0.9, -3.55);
     floorStem.material = this.pbr('floorStemMat', '#2f5228', { roughness: 0.9 });
     for (let i = 0; i < 9; i++) {
       const a = (i / 9) * Math.PI * 2;
       const r = 0.16 + Math.random() * 0.22;
-      const leaf = CreateSphere('floorLeaf' + i, { diameter: 0.24 + Math.random() * 0.16, segments: 12 }, this.scene);
+      const leaf = CreateSphere(
+        'floorLeaf' + i,
+        { diameter: 0.24 + Math.random() * 0.16, segments: 12 },
+        this.scene,
+      );
       leaf.scaling = new Vector3(0.5, 1.5, 1);
-      leaf.position = new Vector3(-3.5 + Math.cos(a) * r * 0.5, 1.15 + Math.random() * 0.5, -3.55 + Math.sin(a) * r);
+      leaf.position = new Vector3(
+        -3.5 + Math.cos(a) * r * 0.5,
+        1.15 + Math.random() * 0.5,
+        -3.55 + Math.sin(a) * r,
+      );
       leaf.rotation.z = (Math.random() - 0.5) * 0.8;
       leaf.rotation.y = a;
       leaf.material = this.pbr('floorLeafMat', '#2f7d4f', { roughness: 1 });
@@ -2339,27 +3471,54 @@ export class RoomScene {
     beanTop.position = new Vector3(2.75, 0.42, 2.05);
     beanTop.material = this.pbr('beanTopMat', '#6d3357', { roughness: 0.9 });
 
-    const guitarBody = CreateCylinder('guitarBody', { height: 0.12, diameterTop: 0.5, diameterBottom: 0.44, tessellation: 32 }, this.scene);
+    const guitarBody = CreateCylinder(
+      'guitarBody',
+      { height: 0.12, diameterTop: 0.5, diameterBottom: 0.44, tessellation: 32 },
+      this.scene,
+    );
     guitarBody.rotation.z = Math.PI / 2;
     guitarBody.rotation.y = 0.15;
     guitarBody.position = new Vector3(-3.78, 0.85, 1.3);
     guitarBody.material = this.pbr('guitarMat', '#c9362b', { roughness: 0.35, metallic: 0.2 });
-    const guitarNeck = this.box('guitarNeck', { w: 0.05, h: 1.1, d: 0.1 }, new Vector3(-3.82, 1.75, 1.3), this.pbr('guitarNeckMat', '#3a2418', { roughness: 0.6 }));
+    const guitarNeck = this.box(
+      'guitarNeck',
+      { w: 0.05, h: 1.1, d: 0.1 },
+      new Vector3(-3.82, 1.75, 1.3),
+      this.pbr('guitarNeckMat', '#3a2418', { roughness: 0.6 }),
+    );
     guitarNeck.rotation.z = 0.06;
-    const guitarHead = this.box('guitarHead', { w: 0.05, h: 0.22, d: 0.16 }, new Vector3(-3.79, 2.32, 1.3), this.pbr('guitarHeadMat', '#241009', { roughness: 0.5 }));
+    const guitarHead = this.box(
+      'guitarHead',
+      { w: 0.05, h: 0.22, d: 0.16 },
+      new Vector3(-3.79, 2.32, 1.3),
+      this.pbr('guitarHeadMat', '#241009', { roughness: 0.5 }),
+    );
     guitarHead.rotation.z = 0.06;
-    const guitarHole = CreateCylinder('guitarHole', { height: 0.14, diameter: 0.16, tessellation: 20 }, this.scene);
+    const guitarHole = CreateCylinder(
+      'guitarHole',
+      { height: 0.14, diameter: 0.16, tessellation: 20 },
+      this.scene,
+    );
     guitarHole.rotation.z = Math.PI / 2;
     guitarHole.rotation.y = 0.15;
     guitarHole.position = new Vector3(-3.74, 0.9, 1.3);
     guitarHole.material = this.pbr('guitarHoleMat', '#0a0704', { roughness: 0.9 });
 
-    const wallShelf = this.box('wallShelf', { w: 0.16, h: 0.04, d: 0.8 }, new Vector3(3.96, 2.05, 1.1), woodDeco);
+    const wallShelf = this.box(
+      'wallShelf',
+      { w: 0.16, h: 0.04, d: 0.8 },
+      new Vector3(3.96, 2.05, 1.1),
+      woodDeco,
+    );
     [
       { z: 0.9, c: '#c96a3c' },
       { z: 1.3, c: '#6a8f5a' },
     ].forEach((p, i) => {
-      const pot = CreateCylinder('wallPot' + i, { height: 0.12, diameterTop: 0.12, diameterBottom: 0.09, tessellation: 16 }, this.scene);
+      const pot = CreateCylinder(
+        'wallPot' + i,
+        { height: 0.12, diameterTop: 0.12, diameterBottom: 0.09, tessellation: 16 },
+        this.scene,
+      );
       pot.position = new Vector3(3.96, 2.13, p.z);
       pot.material = this.pbr('wallPotMat' + i, p.c, { roughness: 0.8 });
       const bush = CreateSphere('wallBush' + i, { diameter: 0.16, segments: 12 }, this.scene);
@@ -2368,27 +3527,34 @@ export class RoomScene {
       bush.material = this.pbr('wallBushMat' + i, '#357d4a', { roughness: 0.9 });
     });
 
-    const lavaBase = CreateCylinder('lavaBase', { height: 0.06, diameter: 0.16, tessellation: 20 }, this.scene);
+    const lavaBase = CreateCylinder(
+      'lavaBase',
+      { height: 0.06, diameter: 0.16, tessellation: 20 },
+      this.scene,
+    );
     lavaBase.position = new Vector3(3.5, 0.72, -2.35);
     lavaBase.material = this.pbr('lavaBaseMat', '#26242f', { roughness: 0.4, metallic: 0.6 });
-    const lavaBody = CreateCylinder('lavaBody', { height: 0.24, diameterTop: 0.12, diameterBottom: 0.14, tessellation: 24 }, this.scene);
+    const lavaBody = CreateCylinder(
+      'lavaBody',
+      { height: 0.24, diameterTop: 0.12, diameterBottom: 0.14, tessellation: 24 },
+      this.scene,
+    );
     lavaBody.position = new Vector3(3.5, 0.86, -2.35);
     lavaBody.material = this.emissive('lavaMat', hex('#ff5a8a'), 0.7);
 
-    const joystickBase = this.box('joyBase', { w: 0.3, h: 0.06, d: 0.22 }, new Vector3(3.5, 0.72, -0.9), this.pbr('joyBaseMat', '#1a1a26', { roughness: 0.5 }));
-    const joystickStick = CreateCylinder('joyStick', { height: 0.16, diameter: 0.03, tessellation: 10 }, this.scene);
-    joystickStick.position = new Vector3(3.44, 0.82, -0.9);
-    joystickStick.material = this.pbr('joyStickMat', '#26242f', { roughness: 0.3, metallic: 0.7 });
-    const joystickBall = CreateSphere('joyBall', { diameter: 0.07, segments: 14 }, this.scene);
-    joystickBall.position = new Vector3(3.44, 0.91, -0.9);
-    joystickBall.material = this.emissive('joyBallMat', NEON_PINK, 0.9);
-    void joystickBase;
-
-    const wallClock = CreateCylinder('wallClock', { height: 0.04, diameter: 0.3, tessellation: 28 }, this.scene);
+    const wallClock = CreateCylinder(
+      'wallClock',
+      { height: 0.04, diameter: 0.3, tessellation: 28 },
+      this.scene,
+    );
     wallClock.rotation.x = Math.PI / 2;
     wallClock.position = new Vector3(-3.15, 2.15, -4.02);
     wallClock.material = this.pbr('wallClockMat', '#161428', { roughness: 0.4, metallic: 0.4 });
-    const wallClockFace = CreateCylinder('wallClockFace', { height: 0.012, diameter: 0.26, tessellation: 28 }, this.scene);
+    const wallClockFace = CreateCylinder(
+      'wallClockFace',
+      { height: 0.012, diameter: 0.26, tessellation: 28 },
+      this.scene,
+    );
     wallClockFace.rotation.x = Math.PI / 2;
     wallClockFace.position = new Vector3(-3.15, 2.15, -3.995);
     wallClockFace.material = this.emissive('wallClockFaceMat', hex('#cfe0ff'), 0.45);
@@ -2450,7 +3616,10 @@ export class RoomScene {
       if (mesh.name !== 'sky' && !mesh.name.startsWith('fairy')) {
         mesh.receiveShadows = true;
       }
-      if (['sky', 'ground', 'floor', 'ceiling', 'hallFloor', 'hallCeil'].includes(mesh.name) || mesh.name.startsWith('fairy')) {
+      if (
+        ['sky', 'ground', 'floor', 'ceiling', 'hallFloor', 'hallCeil'].includes(mesh.name) ||
+        mesh.name.startsWith('fairy')
+      ) {
         return;
       }
       if (mesh.getTotalVertices() > 0) {
@@ -2501,7 +3670,10 @@ export class RoomScene {
       if (mesh.name !== 'sky' && !mesh.name.startsWith('fairy')) {
         mesh.receiveShadows = true;
       }
-      if (['sky', 'ground', 'floor', 'ceiling', 'hallFloor', 'hallCeil'].includes(mesh.name) || mesh.name.startsWith('fairy')) {
+      if (
+        ['sky', 'ground', 'floor', 'ceiling', 'hallFloor', 'hallCeil'].includes(mesh.name) ||
+        mesh.name.startsWith('fairy')
+      ) {
         continue;
       }
       if (mesh.getTotalVertices() > 0) {
@@ -2661,6 +3833,10 @@ export class RoomScene {
     if (!target) {
       return;
     }
+    if (target.kind === 'link') {
+      this.openPadLink(target.pad);
+      return;
+    }
     if (target.kind === 'disc') {
       this.insertDisc(target.index);
       return;
@@ -2711,6 +3887,10 @@ export class RoomScene {
         this.clearDiscHighlight();
         this.hoveredDisc = null;
       }
+      if (this.hoveredPad !== null) {
+        this.clearPadHighlight();
+        this.hoveredPad = null;
+      }
       if (target.id !== this.hoveredId) {
         this.clearHotspotHighlight();
         this.hoveredId = target.id;
@@ -2725,12 +3905,44 @@ export class RoomScene {
         this.clearHotspotHighlight();
         this.hoveredId = null;
       }
+      if (this.hoveredPad !== null) {
+        this.clearPadHighlight();
+        this.hoveredPad = null;
+      }
       if (target.index !== this.hoveredDisc) {
         this.clearDiscHighlight();
         this.hoveredDisc = target.index;
         this.applyDiscHighlight(target.index);
       }
-      this.callbacks.onHover?.({ id: 'disc', discName: this.discProjects[target.index]?.title, x, y });
+      this.callbacks.onHover?.({
+        id: 'disc',
+        discName: this.discProjects[target.index]?.title,
+        x,
+        y,
+      });
+      return;
+    }
+
+    if (target?.kind === 'link') {
+      if (this.hoveredId !== null) {
+        this.clearHotspotHighlight();
+        this.hoveredId = null;
+      }
+      if (this.hoveredDisc !== null) {
+        this.clearDiscHighlight();
+        this.hoveredDisc = null;
+      }
+      if (target.pad !== this.hoveredPad) {
+        this.clearPadHighlight();
+        this.hoveredPad = target.pad;
+        this.applyPadHighlight(target.pad);
+      }
+      this.callbacks.onHover?.({
+        id: 'pad',
+        label: target.pad === 'demo' ? 'Demo ↗' : 'Repo ↗',
+        x,
+        y,
+      });
       return;
     }
 
@@ -2743,12 +3955,19 @@ export class RoomScene {
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     const pick = this.scene.pick(x, y, (mesh) => {
-      const meta = mesh.metadata as { hotspotId?: HotspotId; discIndex?: number } | null;
+      const meta = mesh.metadata as {
+        hotspotId?: HotspotId;
+        discIndex?: number;
+        padLink?: PadLink;
+      } | null;
       if (!meta) {
         return false;
       }
       if (typeof meta.discIndex === 'number') {
         return this.mediaOpen;
+      }
+      if (meta.padLink) {
+        return this.isPadPickable(meta.padLink);
       }
       if (meta.hotspotId) {
         return this.isPickable(meta.hotspotId);
@@ -2758,9 +3977,16 @@ export class RoomScene {
     if (!pick?.hit || !pick.pickedMesh) {
       return this.pickNearestDisc(event);
     }
-    const meta = pick.pickedMesh.metadata as { hotspotId?: HotspotId; discIndex?: number } | null;
+    const meta = pick.pickedMesh.metadata as {
+      hotspotId?: HotspotId;
+      discIndex?: number;
+      padLink?: PadLink;
+    } | null;
     if (meta && typeof meta.discIndex === 'number') {
       return { kind: 'disc', index: meta.discIndex };
+    }
+    if (meta?.padLink) {
+      return { kind: 'link', pad: meta.padLink };
     }
     if (meta?.hotspotId) {
       return { kind: 'hotspot', id: meta.hotspotId };
@@ -2794,7 +4020,12 @@ export class RoomScene {
       if (!mesh.isEnabled()) {
         continue;
       }
-      const projected = Vector3.Project(mesh.getAbsolutePosition(), Matrix.IdentityReadOnly, transform, viewport);
+      const projected = Vector3.Project(
+        mesh.getAbsolutePosition(),
+        Matrix.IdentityReadOnly,
+        transform,
+        viewport,
+      );
       const distance = Math.hypot(projected.x * scaleX - px, projected.y * scaleY - py);
       if (distance < nearestDistance) {
         nearestDistance = distance;
@@ -2825,6 +4056,11 @@ export class RoomScene {
     this.canvas.style.cursor = 'pointer';
   }
 
+  private applyPadHighlight(pad: PadLink): void {
+    void pad;
+    this.canvas.style.cursor = 'pointer';
+  }
+
   private clearHotspotHighlight(): void {
     this.canvas.style.cursor = '';
   }
@@ -2833,11 +4069,18 @@ export class RoomScene {
     this.canvas.style.cursor = '';
   }
 
+  private clearPadHighlight(): void {
+    this.canvas.style.cursor = '';
+    this.refreshPadLeds();
+  }
+
   private clearHighlights(): void {
     this.clearHotspotHighlight();
     this.clearDiscHighlight();
+    this.clearPadHighlight();
     this.hoveredId = null;
     this.hoveredDisc = null;
+    this.hoveredPad = null;
   }
 
   enterHouse(): void {
@@ -2914,7 +4157,7 @@ export class RoomScene {
     if (!ctx) {
       return;
     }
-    const y0 = this.consoleHeader(ctx, 'consola · portafolio-3d');
+    const y0 = this.consoleHeader(ctx, 'konsole · portafolio');
     const lh = 26;
     const px = 18;
     const maxLines = Math.max(1, Math.floor((canvas.height - 16 - y0) / lh) + 1);
@@ -2948,7 +4191,7 @@ export class RoomScene {
     if (!ctx) {
       return;
     }
-    const y0 = this.consoleHeader(ctx, 'salida');
+    const y0 = this.consoleHeader(ctx, 'out');
     const lh = 26;
     const px = 18;
     const maxLines = Math.max(1, Math.floor((canvas.height - 16 - y0) / lh) + 1);
@@ -3058,7 +4301,8 @@ export class RoomScene {
       return;
     }
     if (direction > 0) {
-      this.consoleHistIndex = this.consoleHistIndex < 0 ? count - 1 : Math.max(0, this.consoleHistIndex - 1);
+      this.consoleHistIndex =
+        this.consoleHistIndex < 0 ? count - 1 : Math.max(0, this.consoleHistIndex - 1);
     } else {
       if (this.consoleHistIndex < 0) {
         return;
@@ -3074,5 +4318,4 @@ export class RoomScene {
     this.consoleInput = this.consoleHistory[this.consoleHistIndex] ?? '';
     this.updateTermScreen();
   }
-
 }

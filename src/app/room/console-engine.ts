@@ -108,13 +108,15 @@ export function runConsole(raw: string, ctx: ConsoleContext | undefined, project
       break;
     case 'whoami':
       push(ctx?.handle ?? 'victor', CONSOLE_TERM.strong);
-      push(ctx?.role ?? 'Desarrollador de software', CONSOLE_TERM.soft);
+      push(ctx?.role ?? 'Ingeniero Informatico', CONSOLE_TERM.soft);
       break;
     case 'about':
     case 'perfil':
     case 'sobre': {
       push('sobre mi:', CONSOLE_TERM.accent);
-      const wrapped = (ctx?.about ?? ['Desarrollador de software.']).flatMap((paragraph) => wrapText(paragraph, 46));
+      const wrapped = (ctx?.about ?? ['Ingeniero Informatico.']).flatMap((paragraph) =>
+        wrapText(paragraph, 46),
+      );
       const capped = wrapped.length > 8 ? [...wrapped.slice(0, 8), '…'] : wrapped;
       capped.forEach((line) => push(`  ${line}`, CONSOLE_TERM.soft));
       break;

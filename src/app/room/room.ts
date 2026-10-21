@@ -183,6 +183,9 @@ export class Room implements OnDestroy {
     if (info.id === 'disc') {
       return info.discName ?? 'Disco';
     }
+    if (info.id === 'pad') {
+      return info.label ?? 'Mando';
+    }
     return LABEL_BY_HOTSPOT[info.id];
   }
 
