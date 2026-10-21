@@ -260,8 +260,7 @@ export class Room implements OnDestroy {
         window.location.reload();
         return;
       }
-    } catch {
-    }
+    } catch {}
     this.autoEnterTimer = window.setTimeout(() => {
       if (this.phase() === 'intro') {
         this.scene?.enterHouse();
@@ -282,6 +281,9 @@ export class Room implements OnDestroy {
       return;
     }
     this.viewIndex.set(idx);
+    if (view === 'monitor1') {
+      setTimeout(() => this.focusConsoleInput(), 150);
+    }
   }
 
   private onConsoleChange(open: boolean): void {
@@ -310,15 +312,27 @@ export class Room implements OnDestroy {
     if (ROOM_VIEWS[this.viewIndex()] === 'monitor2') {
       return;
     }
-    const attempt = () => {
-      const field = this.consoleInputRef()?.nativeElement;
-      if (field && document.activeElement !== field) {
-        field.focus({ preventScroll: true });
-      }
-    };
-    attempt();
+    const field = this.consoleInputRef()?.nativeElement;
+    if (!field) {
+      return;
+    }
+    if (document.activeElement === field) {
+      return;
+    }
+    try {
+      field.focus({ preventScroll: true });
+    } catch {}
     if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(attempt);
+      requestAnimationFrame(() => {
+        if (ROOM_VIEWS[this.viewIndex()] === 'monitor2') {
+          return;
+        }
+        if (document.activeElement !== field) {
+          try {
+            field.focus({ preventScroll: true });
+          } catch {}
+        }
+      });
     }
   }
 

@@ -668,6 +668,8 @@ export class RoomScene {
       (this.goal === MONITOR_TERM_POSE || this.goal === MONITOR_OUT_POSE)
     ) {
       this.viewScale = 0.92;
+    } else if (this.coarsePointer && this.consoleOpen && this.goal === CONSOLE_POSE_COARSE) {
+      this.viewScale = 0.92;
     }
   }
 
@@ -3213,8 +3215,7 @@ export class RoomScene {
     }
     try {
       window.open(url, '_blank', 'noopener,noreferrer');
-    } catch {
-    }
+    } catch {}
   }
 
   private buildChair(): void {
@@ -3745,6 +3746,7 @@ export class RoomScene {
         // solo la pantalla de entrada reabre el teclado; la de salida es de lectura
         if (pose === MONITOR_TERM_POSE) {
           this.callbacks.onRequestKeyboard?.();
+          setTimeout(() => this.callbacks.onRequestKeyboard?.(), 250);
         }
       }
       return;
@@ -3861,12 +3863,16 @@ export class RoomScene {
         this.updateViewport();
         if (pose === MONITOR_TERM_POSE) {
           this.callbacks.onRequestKeyboard?.();
+          setTimeout(() => this.callbacks.onRequestKeyboard?.(), 250);
         }
         this.callbacks.onView?.(target.view);
         return;
       }
       this.callbacks.onView?.(target.view);
-      this.openConsole(target.view === 'monitor1' ? MONITOR_TERM_POSE : MONITOR_OUT_POSE, true);
+      this.openConsole(
+        target.view === 'monitor1' ? MONITOR_TERM_POSE : MONITOR_OUT_POSE,
+        target.view === 'monitor1',
+      );
       return;
     }
     if (target.kind === 'disc') {
