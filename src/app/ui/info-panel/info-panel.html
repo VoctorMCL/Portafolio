@@ -58,13 +58,13 @@
 
           <h3 class="panel__label">Enlaces</h3>
           <ul class="links">
-            <li><a [href]="'mailto:' + content.contact.email">{{ content.contact.email }}</a></li>
             @if (content.contact.github) {
               <li><a [href]="content.contact.github" target="_blank" rel="noopener">GitHub</a></li>
             }
             @if (content.contact.linkedin) {
               <li><a [href]="content.contact.linkedin" target="_blank" rel="noopener">LinkedIn</a></li>
             }
+            <li><a [href]="'mailto:' + content.contact.email">{{ content.contact.email }}</a></li>
             @if (content.contact.location) {
               <li class="links__muted">{{ content.contact.location }}</li>
             }

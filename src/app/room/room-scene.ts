@@ -128,8 +128,6 @@ const FOCUS: Record<InteriorId, Pose> = {
   },
 };
 
-// en pantallas estrechas (portrait/coarse) la consola retrocede para que quepan
-// las dos pantallas del escritorio: la terminal (izquierda) y la salida (derecha)
 const CONSOLE_POSE_COARSE: Pose = {
   position: new Vector3(0, 1.52, 0.35),
   target: new Vector3(0, 1.42, -3.42),
@@ -140,8 +138,6 @@ const SCREEN_POSE: Pose = {
   target: new Vector3(3.5, 0.98, -1.5),
 };
 
-// paradas de vista para móvil: cada monitor del escritorio por separado
-// (+X es el lado izquierdo en pantalla)
 const MONITOR_TERM_POSE: Pose = {
   position: new Vector3(0.68, 1.46, -2.15),
   target: new Vector3(0.68, 1.42, -3.37),
@@ -160,9 +156,7 @@ const RACK_ROW_GAP = 0.3;
 const RACK_TOP_Y = 2.463;
 const DISC_RADIUS = 0.14;
 const DISC_THICKNESS = 0.022;
-// los discos descansan en el centro de la repisa (z = -1.5), separados del tope frontal
 const RACK_DISC_X = 3.925;
-// el disco se deposita plano sobre el plato, con la etiqueta mirando hacia arriba
 const DISC_DOCK = new Vector3(3.72, 0.883, -0.82);
 const DISC_DOCK_ROT = Math.PI / 2;
 
@@ -295,7 +289,6 @@ function chamferBox(name: string, w: number, h: number, d: number, scene: Scene)
   return mesh;
 }
 
-// arco semicircular (media luna) extrudido en Z
 function crossSectionSmile(
   name: string,
   diameter: number,
@@ -515,13 +508,10 @@ export class RoomScene {
     forceWebGL: boolean,
   ): Promise<AbstractEngine> {
     const gpu = (navigator as Navigator & { gpu?: unknown }).gpu;
-    // WebGPU se salta en puntero táctil: hay móviles donde initia pero renderiza negro
     const coarse =
       typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
     if (!forceWebGL && gpu && !coarse) {
       try {
-        // import dinámico: el transpilador WGSL solo lo descargan los
-        // navegadores con WebGPU (el resto se queda con WebGL)
         const { WebGPUEngine } = await import('@babylonjs/core/Engines/webgpuEngine');
         if (await WebGPUEngine.IsSupportedAsync) {
           const webgpu = new WebGPUEngine(canvas, {
@@ -570,14 +560,10 @@ export class RoomScene {
     });
     this.glow.intensity = 0.35;
 
-    // luces globales ANTES que las locales: Babylon ata por material solo los
-    // primeros maxSimultaneousLights de scene.lights (orden de creación)
     this.buildBaseLights();
     this.buildEnvironment();
     this.buildExterior();
     this.buildInterior();
-    // gama baja: el pasillo/elevador no se ve en el arranque; se construye
-    // al abrir la puerta (ensureHallway) para aligerar el arranque
     if (this.tier.startLevel >= 3) {
       this.buildHallway();
     } else {
@@ -624,7 +610,6 @@ export class RoomScene {
     pipeline.imageProcessing.vignetteEnabled = true;
     pipeline.imageProcessing.vignetteWeight = this.tone.ipVignette;
     pipeline.imageProcessing.vignetteColor = new Color4(0.0, 0.0, 0.03, 0);
-    // grain y aberración cromática viven en el shader VHS (un solo pase)
     pipeline.grainEnabled = false;
     pipeline.chromaticAberrationEnabled = false;
     return pipeline;
@@ -675,9 +660,6 @@ export class RoomScene {
         ? 1
         : Math.min(1.34, 1 + (1.1 - cssAspect) * (cssAspect < 0.75 ? 0.62 : 0.4));
     if (this.coarsePointer && !this.consoleOpen) {
-      // móvil: mucho zoom — el encuadre se centra en las pantallas del TV
-      // y de la PC, sin retroceso de cámara en portrait. Con la consola abierta
-      // no se aplica: hace falta ver las dos pantallas del escritorio a la vez.
       this.camera.fov *= 0.78;
       this.viewScale = 1;
     } else if (
@@ -685,7 +667,6 @@ export class RoomScene {
       this.consoleOpen &&
       (this.goal === MONITOR_TERM_POSE || this.goal === MONITOR_OUT_POSE)
     ) {
-      // móvil, vista de un monitor suelto: acerca un poco para leer el texto
       this.viewScale = 0.92;
     }
   }
@@ -704,19 +685,15 @@ export class RoomScene {
         }
         return (performance.now() - t0) / frames;
       };
-      // los normal maps se generan en un worker: esperarlos para que el
-      // recompilado con BUMPMAP ocurra durante el calentamiento
       await Promise.race([
         this.normalMapsReady,
         new Promise<void>((resolve) => setTimeout(resolve, 4000)),
       ]);
       await Promise.resolve();
-      // la escena puede haberse destruido mientras esperábamos al worker
       if (this.disposed) {
         return;
       }
       const frameBudget = 1000 / 40;
-      // calentamiento (compila shaders, sube texturas): no se mide
       measure(8);
       for (let i = 0; i < loops; i++) {
         const ms = measure(12);
@@ -775,6 +752,7 @@ export class RoomScene {
       return;
     }
     if (view === 'monitor1' || view === 'monitor2') {
+      this.callbacks.onView?.(view);
       this.openConsole(view === 'monitor1' ? MONITOR_TERM_POSE : MONITOR_OUT_POSE, true);
       return;
     }
@@ -990,7 +968,6 @@ export class RoomScene {
     mesh.setEnabled(true);
     mesh.position.copyFrom(this.discHomes[index]);
     mesh.rotation.z = 0;
-    // viaja desde el estante, gira y queda plano sobre el plato del reproductor
     this.discTweens.push({
       mesh,
       from: this.discHomes[index].clone(),
@@ -1068,10 +1045,6 @@ export class RoomScene {
     this.engine.setHardwareScalingLevel(1 / (Math.min(dpr, 1.5) * scale));
   }
 
-  /**
-   * Aplica un nivel de calidad (0 = extremo ... 4 = completo) de forma
-   * idempotente e invertible: subir restaura todo lo que bajar apagó.
-   */
   private applyQualityLevel(level: number): void {
     const next = Math.max(0, Math.min(4, level));
     if (this.qualityApplied && next === this.qualityLevel) {
@@ -1087,12 +1060,9 @@ export class RoomScene {
       const hadSsao = !!this.ssao;
       this.disposeSsao();
       if (hadSsao) {
-        // quitar SSAO desplaza los índices de la cadena de PPs:
-        // reconstruir pipe + vhs reancla el orden correcto
         this.rebuildPostChain();
       }
     }
-    // leer después de un posible rebuildPostChain
     const p = this.pipeline;
 
     p.samples = coarse || next < 4 ? 1 : 2;
@@ -1161,8 +1131,6 @@ export class RoomScene {
       ssao.bilateralSoften = 0.5;
       this.ssao = ssao;
       if (this.pipeline) {
-        // los PPs de SSAO se enganchan al final: reconstruir la cadena
-        // restaura el orden ssao -> pipeline -> vhs
         this.rebuildPostChain();
       }
     } catch (error) {
@@ -1231,7 +1199,6 @@ export class RoomScene {
     this.freezeStaticMatrices();
   }
 
-  /** Tras el merge, olvida casters disposed y micro-objetos cuya sombra no se ve. */
   private pruneShadowCasters(): void {
     const renderList = this.shadow?.getShadowMap()?.renderList;
     if (!this.shadow || !renderList) {
@@ -1265,7 +1232,6 @@ export class RoomScene {
       animated.add(this.chairRoot);
     }
     this.discs.forEach((disc) => animated.add(disc));
-    // los mandos conservan sus materiales y metadatos (no se pueden fusionar)
     this.padRoots.forEach((root) => animated.add(root));
     return animated;
   }
@@ -1331,7 +1297,6 @@ export class RoomScene {
       }
       merged.freezeWorldMatrix();
     }
-    // las luces locales se acotaron antes del merge: volver a acotarlas a los meshes fusionados
     this.scopeLocalLights(this.localLights);
   }
 
@@ -1864,7 +1829,6 @@ export class RoomScene {
 
     const floor = CreateGround('floor', { width: 8.2, height: 8, subdivisions: 2 }, this.scene);
     floor.material = floorMat;
-    // 12 mm sobre el 'ground' exterior: a la misma altura z-fightea (el "piso que tiembla")
     floor.position = new Vector3(0, 0.012, -0.1);
     const ceiling = CreateGround('ceiling', { width: 8.2, height: 8, subdivisions: 1 }, this.scene);
     ceiling.material = wallMat;
@@ -2246,8 +2210,6 @@ export class RoomScene {
     termScreenMat.emissiveTexture = this.termTexture;
     this.initConsole();
 
-    // Cámara mirando hacia -Z: el lado izquierdo de la imagen es +X.
-    // El monitor de la izquierda (según el espectador) lleva la consola.
     const monitorBodyL = this.box(
       'monitorL',
       { w: 1.1, h: 0.95, d: 0.06 },
@@ -2436,7 +2398,6 @@ export class RoomScene {
     );
     smile.material = stressFace;
 
-    // lámpara de escritorio articulada de dos brazos: base en el escritorio, al lado izquierdo del monitor
     const lampBaseX = -1.32;
     const lampZ = -3.0;
     const lampFoot = CreateCylinder(
@@ -2447,8 +2408,6 @@ export class RoomScene {
     lampFoot.position = new Vector3(lampBaseX, 0.79, lampZ);
     lampFoot.material = metal;
 
-    // articulación en el plano XY (z fijo): base -> codo -> cuello del cabezal
-    // giro del cabezal: la boca del cono mira hacia +X (izquierda en pantalla) y algo hacia arriba
     const headRotZ = 1.2;
     const headCenter = { x: lampBaseX + 0.22, y: 1.19 };
     const mouthDir = { x: Math.sin(headRotZ), y: -Math.cos(headRotZ) };
@@ -2457,7 +2416,6 @@ export class RoomScene {
       x: headCenter.x - 0.08 * Math.sin(headRotZ),
       y: headCenter.y + 0.08 * Math.cos(headRotZ),
     };
-    // codo: justo por encima del cabezal, ligeramente hacia el borde derecho del escritorio
     const lampP1 = { x: lampBaseX - 0.06, y: 1.27 };
     const lampLink = (
       name: string,
@@ -2490,7 +2448,6 @@ export class RoomScene {
     lampHead.position = new Vector3(headCenter.x, headCenter.y, lampZ);
     lampHead.rotation.z = headRotZ;
     lampHead.material = metal;
-    // la bombilla se asienta dentro de la boca del cono (diámetro grande, bottom)
     const lampBulb = CreateSphere('lampBulb', { diameter: 0.09, segments: 12 }, this.scene);
     lampBulb.position = new Vector3(
       headCenter.x + mouthDir.x * 0.055,
@@ -2651,7 +2608,6 @@ export class RoomScene {
       board.parent = shelf;
       pickables.push(board);
       if (i > 0) {
-        // tira LED bajo el canto frontal de cada balda, por fuera de los libros
         const strip = this.box(
           'shelfStrip' + i,
           { w: 0.02, h: 0.012, d: 1.9 },
@@ -2680,7 +2636,6 @@ export class RoomScene {
     ];
     const bookMats = bookColors.map((c, i) => {
       const mat = this.pbr('bookMat' + i, c, { roughness: 0.8 });
-      // tras el merge los libros pueden mostrar caras interiores: que nunca se vean huecos
       mat.backFaceCulling = false;
       return mat;
     });
@@ -2862,22 +2817,17 @@ export class RoomScene {
     const rackWoodDark = this.pbr('discRackDark', '#5a4232', { roughness: 0.72 });
     const rackWoodLight = this.pbr('discRackWood', '#c49a6a', { roughness: 0.55 });
 
-    // mueble: tapa superior en y=0.70, x 3.25..4.15, z -2.6..-0.4
     this.slab('mediaCabinet', 0.9, 2.2, 0.7, 0.06, new Vector3(3.7, 0.35, -1.5), cabinetMat);
-    // sobresale del mueble para no ser coplanar con su cara
     this.box('cabinetSeam', { w: 0.012, h: 0.5, d: 0.02 }, new Vector3(3.247, 0.35, -1.5), metal);
 
     const tvPickables: Mesh[] = [];
 
-    // ── TV de tubo ──
-    // capas, de la pared al espectador: carcasa → cuello → panel oscuro → pantalla → marco.
     const tvBody = this.box(
       'tvBody',
       { w: 0.44, h: 0.86, d: 1.02 },
       new Vector3(3.85, 1.12, tvZ),
       plastic,
     );
-    // halo tenue pegado a la pared: separa la silueta del televisor del muro oscuro
     const bias = CreatePlane('tvBias', { width: 1.14, height: 0.98 }, this.scene);
     bias.rotation.y = Math.PI / 2;
     bias.position.copyFrom(new Vector3(4.085, 1.12, tvZ));
@@ -2956,7 +2906,6 @@ export class RoomScene {
       tvPickables.push(knob);
     });
 
-    // ── reproductor de discos ──
     const deckBody = CreateBox(
       'discDeckBase',
       { width: 0.46, height: 0.16, depth: 0.5 },
@@ -2980,7 +2929,6 @@ export class RoomScene {
       trim.position.copyFrom(new Vector3(3.72 + side * 0.225, 0.775, -0.82));
       trim.material = deckFaceMat;
     });
-    // plato en la cara superior, con aire suficiente (sin z-fighting)
     const platter = CreateCylinder(
       'discPlatter',
       { height: 0.012, diameter: 0.3, tessellation: 44 },
@@ -3002,7 +2950,6 @@ export class RoomScene {
       this.emissive('discDeckLedMat', NEON_CYAN, 1.4),
     );
 
-    // ── estantería de discos sobre la TV: fondo claro para que los discos se vean ──
     this.box(
       'discRackBack',
       { w: 0.03, h: 1.04, d: 1.94 },
@@ -3041,7 +2988,6 @@ export class RoomScene {
       new Vector3(3.975, 2.63, rackZ),
       rackWoodLight,
     );
-    // topes frontales: recortados en z para no cruzar los discos de las columnas extremas
     [2.32, 2.02, 1.72].forEach((y, i) => {
       this.box(
         'discLip' + i,
@@ -3062,7 +3008,6 @@ export class RoomScene {
     tvLight.intensity = 2.2;
     tvLight.range = 4.5;
     this.localLights.push(tvLight);
-    // luz frontal dedicada al lector: evita que frente y laterales caigan en sombra
     const deckLight = new PointLight('deckGlow', new Vector3(3.1, 0.95, -0.35), this.scene);
     deckLight.diffuse = hex('#e8e4f5');
     deckLight.intensity = 1.5;
@@ -3086,7 +3031,6 @@ export class RoomScene {
     const bodyMat = this.pbr('padBody', '#26222f', { roughness: 0.5 });
     const darkMat = this.pbr('padDark', '#0d0c12', { roughness: 0.45 });
 
-    // al frente de la TV, lado a lado sobre la tapa del mueble
     const demo = this.buildPad(
       'padDemo',
       'demo',
@@ -3135,7 +3079,6 @@ export class RoomScene {
       mesh.metadata = { padLink: pad };
     };
 
-    // anillo en el suelo: resalta el mando cuando tiene demo/repo
     const halo = CreateTorus(
       name + 'Halo',
       { diameter: 0.27, thickness: 0.007, tessellation: 48 },
@@ -3225,7 +3168,6 @@ export class RoomScene {
     }
   }
 
-  // pulso suave: demo/repo disponibles respiran; el hover los enciende del todo
   private updatePads(): void {
     const pulse = 0.5 + 0.5 * Math.sin(this.elapsed * 2.2);
     const demoOn = !!this.padsProject?.demoUrl;
@@ -3272,7 +3214,6 @@ export class RoomScene {
     try {
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch {
-      // popup bloqueado: ignorar
     }
   }
 
@@ -3630,7 +3571,6 @@ export class RoomScene {
     this.localLights.push(fwLight);
   }
 
-  /** Globales sin scoping: siempre en los primeros slots de cada material. */
   private buildBaseLights(): void {
     const hemi = new HemisphericLight('hemi', new Vector3(0, 1, 0), this.scene);
     hemi.intensity = this.tone.hemi;
@@ -3652,8 +3592,6 @@ export class RoomScene {
     ceil.intensity = 9.5;
     ceil.range = 13;
 
-    // acento cálido para la estantería (zona más oscura de la habitación)
-    // shelfPt ilumina las filas de abajo/medio; shelfTopPt la fila alta
     const shelfLight = new PointLight('shelfPt', new Vector3(-3.3, 1.55, -1.4), this.scene);
     shelfLight.diffuse = hex('#ffd9b0');
     shelfLight.intensity = 4;
@@ -3695,8 +3633,6 @@ export class RoomScene {
     ceilBulb.position = new Vector3(0, 2.55, -1);
     ceilBulb.material = this.emissive('ceilBulbMat', hex('#fff0d0'), 1.2);
 
-    // acota cada luz local a los meshes de su zona: sin esto ocupan slots
-    // del cupo de luces por material y apagan (literalmente) las globales
     this.scopeLocalLights(this.localLights);
   }
 
@@ -3917,6 +3853,16 @@ export class RoomScene {
     }
     if (target.kind === 'monitor') {
       if (this.phase === 'intro' || this.phase === 'entering') {
+        return;
+      }
+      if (this.consoleOpen) {
+        const pose = target.view === 'monitor1' ? MONITOR_TERM_POSE : MONITOR_OUT_POSE;
+        this.goal = pose;
+        this.updateViewport();
+        if (pose === MONITOR_TERM_POSE) {
+          this.callbacks.onRequestKeyboard?.();
+        }
+        this.callbacks.onView?.(target.view);
         return;
       }
       this.callbacks.onView?.(target.view);
@@ -4270,7 +4216,6 @@ export class RoomScene {
     const lh = 22;
     const px = 18;
 
-    // comandos fijos: siempre visibles como referencia
     const half = Math.ceil(CONSOLE_COMMANDS.length / 2);
     ctx.font = '14px monospace';
     ctx.fillStyle = CONSOLE_TERM.accent;
@@ -4291,7 +4236,6 @@ export class RoomScene {
     ctx.fillStyle = 'rgba(108, 208, 255, 0.22)';
     ctx.fillRect(px, sepY - 14, canvas.width - px * 2, 1);
 
-    // resultado del ultimo comando: debajo de la referencia
     const bodyY = sepY + 12;
     const maxLines = Math.max(1, Math.floor((canvas.height - 12 - bodyY) / lh) + 1);
     const pool = this.consoleOut.length

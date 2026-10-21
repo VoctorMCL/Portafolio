@@ -222,7 +222,6 @@ export class Room implements OnDestroy {
   }
 
   protected stepView(delta: number): void {
-    // en móvil la vista "PC" se omite: los monitores abren Pantalla 1 y 2
     const views = this.compactNav() ? ROOM_VIEWS.filter((v) => v !== 'desk') : ROOM_VIEWS;
     const count = views.length;
     const current = views.indexOf(ROOM_VIEWS[this.viewIndex()]);
@@ -262,7 +261,6 @@ export class Room implements OnDestroy {
         return;
       }
     } catch {
-      // sessionStorage no disponible: continuar sin recargar
     }
     this.autoEnterTimer = window.setTimeout(() => {
       if (this.phase() === 'intro') {
@@ -279,7 +277,11 @@ export class Room implements OnDestroy {
   }
 
   private syncView(view: ViewId): void {
-    this.viewIndex.set(Math.max(0, ROOM_VIEWS.indexOf(view)));
+    const idx = ROOM_VIEWS.indexOf(view);
+    if (idx < 0) {
+      return;
+    }
+    this.viewIndex.set(idx);
   }
 
   private onConsoleChange(open: boolean): void {
@@ -291,7 +293,10 @@ export class Room implements OnDestroy {
       this.consoleDraft.set('');
       if (this.section()) {
         this.section.set(null);
-        this.viewIndex.set(0);
+        const v = ROOM_VIEWS[this.viewIndex()];
+        if (v !== 'monitor1' && v !== 'monitor2') {
+          this.viewIndex.set(0);
+        }
       }
       this.focusConsoleInput();
     }
@@ -302,13 +307,9 @@ export class Room implements OnDestroy {
     if (!this.compactNav()) {
       return;
     }
-    // la pantalla de salida es solo de lectura: no abre teclado
     if (ROOM_VIEWS[this.viewIndex()] === 'monitor2') {
       return;
     }
-    // el foco debe caer dentro del gesto del usuario para que el teclado
-    // nativo se abra en móvil; el input se crea tras el render reactivo,
-    // así que se reintenta en el siguiente frame
     const attempt = () => {
       const field = this.consoleInputRef()?.nativeElement;
       if (field && document.activeElement !== field) {
@@ -328,12 +329,10 @@ export class Room implements OnDestroy {
   protected onConsoleInput(event: Event): void {
     const value = (event.target as HTMLInputElement).value;
     this.consoleDraft.set(value);
-    // el borrador se ve en vivo en la pantalla 3D de la consola
     this.scene?.setConsoleDraft(value);
   }
 
   protected onConsoleKeydown(event: KeyboardEvent): void {
-    // evita el doble manejo con el listener global de teclado de la escena
     event.stopPropagation();
     if (event.key === 'Escape') {
       event.preventDefault();

@@ -21,7 +21,6 @@
     } @else if (consoleActive() && !compactNav()) {
       <p class="hint">Escribe un comando en el monitor · Esc para salir</p>
     } @else if (consoleActive() && compactNav()) {
-      <!-- en móvil la consola no muestra hint: el texto se solapaba con el título de la vista -->
     } @else if (phase() === 'intro') {
       <p class="hint">Abriendo las puertas del ascensor&#8230;</p>
     } @else if (mediaOpen()) {
@@ -74,9 +73,6 @@
     </div>
   }
 
-  <!-- input fantasma siempre presente: existe en el DOM antes de abrir la
-       consola, así el foco cae dentro del gesto del usuario y el teclado
-       nativo se abre en iOS; lo que se escribe se refleja en la pantalla 3D -->
   <input
     #consoleInput
     class="console-ghost"
