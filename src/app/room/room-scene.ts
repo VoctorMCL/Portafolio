@@ -36,6 +36,7 @@ import '@babylonjs/core/Culling/ray';
 import { VHS_SHADER_NAME } from './vhs-post';
 import {
   CONSOLE_BOOT,
+  CONSOLE_COMMANDS,
   CONSOLE_INPUT_MAX,
   CONSOLE_PROMPT,
   CONSOLE_TERM,
@@ -466,6 +467,7 @@ export class RoomScene {
   private lastCursor = 0;
   private consoleOut: ConsoleLine[] = [];
   private consoleEcho: string[] = [];
+  private helpShown = false;
   private consoleHistory: string[] = [];
   private consoleHistIndex = -1;
   private consoleCtx?: ConsoleContext;
@@ -3811,7 +3813,8 @@ export class RoomScene {
     this.consoleEcho = this.consoleEcho.slice(-8);
     this.attachConsoleKeys();
     this.updateViewport();
-    if (runHelp) {
+    if (runHelp && !this.helpShown) {
+      this.helpShown = true;
       this.submitConsole('help');
     }
     this.updateTermScreen();
@@ -4216,7 +4219,7 @@ export class RoomScene {
     if (!ctx) {
       return;
     }
-    const y0 = this.consoleHeader(ctx, 'konsole · portafolio');
+    const y0 = this.consoleHeader(ctx, 'entrada · escribe un comando');
     const lh = 26;
     const px = 18;
     const maxLines = Math.max(1, Math.floor((canvas.height - 16 - y0) / lh) + 1);
@@ -4250,17 +4253,44 @@ export class RoomScene {
     if (!ctx) {
       return;
     }
-    const y0 = this.consoleHeader(ctx, 'out');
-    const lh = 26;
+    const y0 = this.consoleHeader(ctx, 'salida · resultado');
+    const lh = 22;
     const px = 18;
-    const maxLines = Math.max(1, Math.floor((canvas.height - 16 - y0) / lh) + 1);
+
+    // comandos fijos: siempre visibles como referencia
+    const half = Math.ceil(CONSOLE_COMMANDS.length / 2);
+    ctx.font = '14px monospace';
+    ctx.fillStyle = CONSOLE_TERM.accent;
+    ctx.fillText('comandos:', px, y0);
+    const colX = [px, px + 240];
+    CONSOLE_COMMANDS.forEach((entry, i) => {
+      const col = Math.floor(i / half);
+      const row = i % half;
+      ctx.fillStyle = CONSOLE_TERM.soft;
+      ctx.fillText(
+        `${entry.cmd.padEnd(9)}${entry.hint}`.slice(0, 26),
+        colX[col],
+        y0 + (row + 1) * lh,
+      );
+    });
+    ctx.font = '16px monospace';
+    const sepY = y0 + (half + 1) * lh + 4;
+    ctx.fillStyle = 'rgba(108, 208, 255, 0.22)';
+    ctx.fillRect(px, sepY - 14, canvas.width - px * 2, 1);
+
+    // resultado del ultimo comando: debajo de la referencia
+    const bodyY = sepY + 12;
+    const maxLines = Math.max(1, Math.floor((canvas.height - 12 - bodyY) / lh) + 1);
     const pool = this.consoleOut.length
       ? this.consoleOut
-      : [{ text: 'escribe "help" y pulsa Enter', color: CONSOLE_TERM.dim } satisfies ConsoleLine];
+      : ([
+          { text: 'El resultado de tus comandos', color: CONSOLE_TERM.dim },
+          { text: 'aparece aqui abajo.', color: CONSOLE_TERM.dim },
+        ] satisfies ConsoleLine[]);
     const lines = pool.slice(-maxLines);
     lines.forEach((line, i) => {
       ctx.fillStyle = line.color;
-      ctx.fillText(this.clip(line.text), px, y0 + i * lh);
+      ctx.fillText(this.clip(line.text), px, bodyY + i * lh);
     });
     this.blit(canvas, this.outTexture);
   }
