@@ -1,6 +1,6 @@
 # Portafolio — Victor Manuel Córdoba Larez
 
-Portafolio interactivo en 3D: una habitación completa —con pasillo, ascensor, escritorio, estantería y un mueble de medios— construida **100 % en código** con [Angular 22](https://angular.dev) y [Babylon.js](https://www.babylonjs.com/). No hay modelos glTF/GLB: todos los objetos son geometría procedural generada en tiempo de ejecución.
+Portafolio interactivo en 3D: una habitación completa con pasillo, ascensor, escritorio, estantería y un mueble de medios. Construida con [Angular 22](https://angular.dev) y [Babylon.js](https://www.babylonjs.com/). No hay modelos glTF/GLB: todos los objetos son geometría procedural generada en tiempo de ejecución.
 
 Explora la habitación con el ratón (o el dedo), abre los paneles tocando los objetos, pon un "disco" en el reproductor para ver un proyecto y, si quieres, abre la consola del PC y escribe comandos.
 
@@ -100,7 +100,7 @@ El pasillo y la habitación se decoran con **pósteres de tecnologías** que se 
 - El pasillo toma 4 pósteres (`slice(0, 4)`) y la habitación los siguientes 6 (`slice(4, 10)`).
 - Cada póster se pinta en un canvas (`logoPosterCanvas`) con el color propio de cada logo y se usa como textura emisiva.
 
-Resultado: **la decoración de cada carga es distinta**, pero siempre con las mismas tecnologías del perfil.
+Resultado: **la decoración de cada carga es distinta**, pero siempre con las mismas tecnologías de mi perfil.
 
 ### Los perfiles ligeros (calidad adaptativa)
 
