@@ -3887,16 +3887,19 @@ export class RoomScene {
       this.openDiscRack();
       return;
     }
-    if (target.id === 'terminal') {
+    if (target.id === 'terminal' || target.id === 'desk') {
       if (this.phase === 'intro' || this.phase === 'entering') {
         return;
       }
-      this.openConsole();
-      return;
-    }
-    if (target.id === 'desk') {
-      // el escritorio abre la consola: el contacto se pide escribiendo `contact`
-      if (this.phase === 'intro' || this.phase === 'entering') {
+      if (this.coarsePointer || this.narrow) {
+        if (this.consoleOpen) {
+          this.goal = MONITOR_TERM_POSE;
+          this.updateViewport();
+          this.callbacks.onView?.('monitor1');
+          return;
+        }
+        this.callbacks.onView?.('monitor1');
+        this.openConsole(MONITOR_TERM_POSE, true);
         return;
       }
       this.openConsole();
