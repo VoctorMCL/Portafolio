@@ -263,7 +263,11 @@
   width: 1px;
   height: 1px;
   padding: 0;
-  opacity: 0;
+  /* no usar opacity:0 ni visibility:hidden: iOS Safari no abre el teclado
+     si el campo está totalmente oculto */
+  opacity: 0.01;
+  color: transparent;
+  caret-color: transparent;
   border: 0;
   background: transparent;
   pointer-events: none;

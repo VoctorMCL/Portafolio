@@ -41,7 +41,7 @@ const LABEL_BY_HOTSPOT: Record<HotspotId, string> = {
   terminal: 'Consola',
 };
 
-const ROOM_VIEWS: ViewId[] = ['general', 'tv', 'shelf', 'monitor1', 'monitor2', 'desk'];
+const ROOM_VIEWS: ViewId[] = ['general', 'tv', 'monitor1', 'monitor2', 'shelf', 'desk'];
 
 const VIEW_LABEL: Record<ViewId, string> = {
   general: 'Vista general',
@@ -292,8 +292,28 @@ export class Room implements OnDestroy {
         this.section.set(null);
         this.viewIndex.set(0);
       }
+      this.focusConsoleInput();
     }
     this.syncConsoleOutput();
+  }
+
+  private focusConsoleInput(): void {
+    if (!this.compactNav()) {
+      return;
+    }
+    // el foco debe caer dentro del gesto del usuario para que el teclado
+    // nativo se abra en móvil; el input se crea tras el render reactivo,
+    // así que se reintenta en el siguiente frame
+    const attempt = () => {
+      const field = this.consoleInputRef()?.nativeElement;
+      if (field && document.activeElement !== field) {
+        field.focus({ preventScroll: true });
+      }
+    };
+    attempt();
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(attempt);
+    }
   }
 
   private syncConsoleOutput(): void {
