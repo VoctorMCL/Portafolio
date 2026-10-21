@@ -74,24 +74,34 @@
     </div>
   }
 
+  <!-- input fantasma siempre presente: existe en el DOM antes de abrir la
+       consola, así el foco cae dentro del gesto del usuario y el teclado
+       nativo se abre en iOS; lo que se escribe se refleja en la pantalla 3D -->
+  <input
+    #consoleInput
+    class="console-ghost"
+    type="text"
+    name="command"
+    autocomplete="off"
+    autocapitalize="off"
+    autocorrect="off"
+    spellcheck="false"
+    enterkeyhint="send"
+    [value]="consoleDraft()"
+    (input)="onConsoleInput($event)"
+    (keydown)="onConsoleKeydown($event)"
+    aria-label="Escribe un comando en la consola"
+  />
+
   @if (consoleActive() && compactNav()) {
-    <!-- sin modal: solo el input fantasma que abre el teclado nativo;
-         lo que se escribe se refleja en la pantalla 3D de la consola -->
-    <input
-      #consoleInput
-      class="console-ghost"
-      type="text"
-      name="command"
-      autocomplete="off"
-      autocapitalize="off"
-      autocorrect="off"
-      spellcheck="false"
-      enterkeyhint="send"
-      [value]="consoleDraft()"
-      (input)="onConsoleInput($event)"
-      (keydown)="onConsoleKeydown($event)"
-      aria-label="Escribe un comando en la consola"
-    />
+    <button
+      type="button"
+      class="console-ghost__type"
+      (click)="openKeyboard()"
+      aria-label="Escribir un comando"
+    >
+      Escribir
+    </button>
     <button
       type="button"
       class="console-ghost__close"
