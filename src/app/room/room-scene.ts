@@ -273,6 +273,60 @@ function chamferBox(name: string, w: number, h: number, d: number, scene: Scene)
   return mesh;
 }
 
+// arco semicircular (media luna) extrudido en Z
+function crossSectionSmile(
+  name: string,
+  diameter: number,
+  thickness: number,
+  arc: number,
+  scene: Scene,
+): Mesh {
+  const segments = 32;
+  const r = diameter / 2;
+  const tube = thickness / 2;
+  const depth = thickness;
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const indices: number[] = [];
+  const uvs: number[] = [];
+
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const angle = Math.PI * (0.5 - arc / 2) + t * Math.PI * arc;
+    const cx = Math.cos(angle) * r;
+    const cy = Math.sin(angle) * r;
+    const nx = Math.cos(angle);
+    const ny = Math.sin(angle);
+    for (let j = 0; j < 4; j++) {
+      const radial = j === 0 || j === 3 ? tube : -tube;
+      const z = j < 2 ? -depth / 2 : depth / 2;
+      positions.push(cx + nx * radial, cy + ny * radial, z);
+      normals.push(nx, ny, 0);
+      uvs.push(t, j / 3);
+    }
+  }
+
+  const ring = 4;
+  for (let i = 0; i < segments; i++) {
+    const a = i * ring;
+    const b = (i + 1) * ring;
+    for (let j = 0; j < ring; j++) {
+      const j2 = (j + 1) % ring;
+      indices.push(a + j, b + j, b + j2);
+      indices.push(a + j, b + j2, a + j2);
+    }
+  }
+
+  const mesh = new Mesh(name, scene);
+  const vd = new VertexData();
+  vd.positions = positions;
+  vd.indices = indices;
+  vd.uvs = uvs;
+  VertexData.ComputeNormals(positions, indices, (vd.normals = []));
+  vd.applyToMesh(mesh);
+  return mesh;
+}
+
 export class RoomScene {
   private readonly engine: AbstractEngine;
   private readonly scene: Scene;
@@ -1549,7 +1603,6 @@ export class RoomScene {
     return mesh;
   }
 
-  // proyecta la geometría (coords. de mundo) sobre la superficie frontal de una esfera
   private warpToSphere(
     mesh: Mesh,
     sphereRadius: number,
@@ -1925,13 +1978,12 @@ export class RoomScene {
       this.addPoster(`hallPoster${i}`, p.skill, p.w, p.h, p.pos, p.rotY);
     });
 
-    const plate = this.box(
+    this.box(
       'hallPlate',
       { w: 0.14, h: 0.18, d: 0.04 },
       new Vector3(0.9, 1.6, 4.09),
       this.pbr('hallPlateMat', '#161428', { roughness: 0.4, metallic: 0.4 }),
     );
-    void plate;
 
     [5.3, 6.7].forEach((z, i) => {
       const fixture = CreateCylinder(
@@ -1959,13 +2011,12 @@ export class RoomScene {
     this.box('elevThreshold', { w: 2.1, h: 0.024, d: 0.1 }, new Vector3(0, 0.012, 7.5), metal);
     this.box('elevHeader', { w: 2.1, h: 0.42, d: 0.14 }, new Vector3(0, 2.49, 7.5), metalDark);
 
-    const elevLightPanel = this.box(
+    this.box(
       'elevLightPanel',
       { w: 0.8, h: 0.02, d: 0.5 },
       new Vector3(0, 2.62, 8.05),
       this.emissive('elevLightPanelMat', hex('#dfe8ff'), 1.3),
     );
-    void elevLightPanel;
     const cabinLight = new PointLight('elevLight', new Vector3(0, 2.4, 8.0), this.scene);
     cabinLight.diffuse = hex('#dfe8ff');
     cabinLight.intensity = 3.5;
@@ -2212,7 +2263,6 @@ export class RoomScene {
         );
       }
     }
-    void kb;
 
     const mouse = CreateSphere('mouse', { diameter: 0.13, segments: 16 }, this.scene);
     mouse.scaling = new Vector3(1, 0.7, 1.4);
@@ -2294,7 +2344,6 @@ export class RoomScene {
       bookStack.push(nb);
     });
 
-    // bola antiestrés amarilla con cara feliz, en el frente del escritorio
     const stressBallR = 0.065;
     const stressBallY = 0.775 + stressBallR;
     const stressBallX = -0.85;
@@ -2306,19 +2355,14 @@ export class RoomScene {
     );
     stressBall.position = new Vector3(stressBallX, stressBallY, stressBallZ);
     stressBall.material = this.pbr('stressBallMat', '#ffd23f', { roughness: 0.45 });
-    const stressFaceMat = this.pbr('stressFaceMat', '#ffffff', { roughness: 0.45 });
-    const stressFaceTex = this.texture(faceCanvas(), 1, -1);
-    stressFaceTex.wrapU = Texture.CLAMP_ADDRESSMODE;
-    stressFaceTex.wrapV = Texture.CLAMP_ADDRESSMODE;
-    stressFaceMat.albedoTexture = stressFaceTex;
     const stressFace = this.pbr('stressFace', '#101014', { roughness: 0.35 });
     const stressEyes: Mesh[] = [];
     const faceR = stressBallR * 0.985;
     [-1, 1].forEach((side) => {
       const dirX = side * 0.38;
-      const dirY = 0.22;
+      const dirY = 0.42;
       const dirZ = Math.sqrt(Math.max(0, 1 - dirX * dirX - dirY * dirY));
-      const eye = CreateSphere('stressEye' + side, { diameter: 0.021, segments: 10 }, this.scene);
+      const eye = CreateSphere('stressEye' + side, { diameter: 0.024, segments: 10 }, this.scene);
       eye.position = new Vector3(
         stressBallX + dirX * faceR,
         stressBallY + dirY * faceR,
@@ -2328,30 +2372,17 @@ export class RoomScene {
       eye.material = stressFace;
       stressEyes.push(eye);
     });
-    const smileGeo = CreateTorus(
-      'stressSmileGeo',
-      { diameter: 0.096, thickness: 0.011, tessellation: 40, arc: 0.5 },
-      this.scene,
-    );
-    const smilePositions = smileGeo.getVerticesData(VertexBuffer.PositionKind)!;
-    const cosArc = Math.cos(0.5 * Math.PI);
-    const sinArc = Math.sin(0.5 * Math.PI);
-    for (let i = 0; i < smilePositions.length; i += 3) {
-      if (smilePositions[i] < cosArc - 1e-5) smilePositions[i] = cosArc;
-      if (smilePositions[i + 1] < sinArc - 1e-5) smilePositions[i + 1] = sinArc;
-    }
-    smileGeo.updateVerticesData(VertexBuffer.PositionKind, smilePositions);
+    const smileGeo = crossSectionSmile('stressSmileGeo', 0.084, 0.014, 0.62, this.scene);
     smileGeo.rotation.x = Math.PI / 2;
-    smileGeo.position = new Vector3(stressBallX, stressBallY - 0.016, stressBallZ + 0.038);
-    const smileR = 0.048;
+    smileGeo.position = new Vector3(stressBallX, stressBallY - 0.028, stressBallZ + 0.044);
     const smile = this.warpToSphere(
       smileGeo,
       stressBallR * 0.99,
       stressBallX,
       stressBallY,
       stressBallZ,
-      smileR,
-      0.5,
+      0.044,
+      0.6,
     );
     smile.material = stressFace;
 
@@ -2504,8 +2535,6 @@ export class RoomScene {
       pen.material = this.pbr('penMat' + i, penColors[i], { roughness: 0.35 });
       pens.push(pen);
     });
-
-    void mugInner;
 
     const deskHotspot: Mesh[] = [
       top,
@@ -2675,7 +2704,6 @@ export class RoomScene {
     candleFlame.position = new Vector3(-3.86, 1.95, -2.3);
     candleFlame.material = this.emissive('flameMat', hex('#ffb347'), 1.8);
 
-    // globo terráqueo en el frente de la segunda balda (a la altura de los ojos, bien visible)
     const globeX = -3.9;
     const globeZ = -0.43;
     const globeFoot = CreateCylinder(
@@ -2786,14 +2814,13 @@ export class RoomScene {
 
     // mueble: tapa superior en y=0.70, x 3.25..4.15, z -2.6..-0.4
     this.slab('mediaCabinet', 0.9, 2.2, 0.7, 0.06, new Vector3(3.7, 0.35, -1.5), cabinetMat);
-    // junta frontal: sobresale del mueble para no ser coplanar con su cara
+    // sobresale del mueble para no ser coplanar con su cara
     this.box('cabinetSeam', { w: 0.012, h: 0.5, d: 0.02 }, new Vector3(3.247, 0.35, -1.5), metal);
 
     const tvPickables: Mesh[] = [];
 
-    // ── TV de tubo ─────────────────────────────────────────────────────────────
+    // ── TV de tubo ──
     // capas, de la pared al espectador: carcasa → cuello → panel oscuro → pantalla → marco.
-    // Así no queda ninguna cámara hueca y la pantalla nunca queda tapada.
     const tvBody = this.box(
       'tvBody',
       { w: 0.44, h: 0.86, d: 1.02 },
@@ -2805,16 +2832,13 @@ export class RoomScene {
     bias.rotation.y = Math.PI / 2;
     bias.position.copyFrom(new Vector3(4.085, 1.12, tvZ));
     bias.material = this.emissive('tvBiasMat', NEON_CYAN, 0.38);
-    // el "cuello" rellena el frente del tubo hasta el marco: sin cámara hueca por los costados
     this.box('tvNeck', { w: 0.2, h: 0.74, d: 0.9 }, new Vector3(3.76, 1.14, tvZ), plastic);
-    // panel oscuro interno: detrás de la pantalla, actuará de marco interior del tubo
     this.box(
       'tvScreenPanel',
       { w: 0.02, h: 0.66, d: 0.78 },
       new Vector3(3.655, 1.14, tvZ),
       panelMat,
     );
-    // marco frontal en 4 barras que sobresale por delante de todo
     const frameX = 3.575;
     const frameW = 0.11;
     const bars = [
@@ -2855,14 +2879,12 @@ export class RoomScene {
     screenMat.clearCoat.intensity = 1;
     screenMat.clearCoat.roughness = 0.1;
     this.tvScreenMat = screenMat;
-    // pantalla: por delante del panel oscuro y justo detrás del marco (nunca tapada)
     const screenMesh = CreatePlane('tvScreen', { width: 0.72, height: 0.58 }, this.scene);
     screenMesh.rotation.y = Math.PI / 2;
     screenMesh.position.copyFrom(new Vector3(3.635, 1.14, tvZ));
     screenMesh.material = screenMat;
     this.setScreen(null);
 
-    // piloto de encendido en la barra inferior
     this.box(
       'tvPowerLed',
       { w: 0.012, h: 0.018, d: 0.022 },
@@ -2884,8 +2906,7 @@ export class RoomScene {
       tvPickables.push(knob);
     });
 
-    // ── reproductor de discos: caja nativa de Babylon (caras y UV correctas) ──
-    // cuerpo sólido 0.70..0.86 sobre la tapa del mueble
+    // ── reproductor de discos ──
     const deckBody = CreateBox(
       'discDeckBase',
       { width: 0.46, height: 0.16, depth: 0.5 },
@@ -2893,7 +2914,6 @@ export class RoomScene {
     );
     deckBody.position.copyFrom(new Vector3(3.72, 0.78, -0.82));
     deckBody.material = deckMat;
-    // frente con relieve: bandeja que sobresale en la cara frontal (z mayor hacia cámara)
     const deckFace = CreateBox(
       'discDeckFace',
       { width: 0.44, height: 0.12, depth: 0.03 },
@@ -2901,7 +2921,6 @@ export class RoomScene {
     );
     deckFace.position.copyFrom(new Vector3(3.72, 0.775, -0.565));
     deckFace.material = deckFaceMat;
-    // laterales con relieve
     [-1, 1].forEach((side) => {
       const trim = CreateBox(
         'discDeckTrim' + side,
@@ -2926,7 +2945,6 @@ export class RoomScene {
     );
     hub.position = new Vector3(3.72, 0.874, -0.82);
     hub.material = metal;
-    // botonera LED frontal, embutida en la bandeja
     this.box(
       'discDeckLed',
       { w: 0.06, h: 0.014, d: 0.012 },
@@ -3075,8 +3093,6 @@ export class RoomScene {
     );
     halo.position = new Vector3(0, 0.004, 0);
     attach(halo, ring);
-
-    // cuerpo y grips laterales
     attach(
       this.box(
         name + 'Body',
@@ -3097,7 +3113,6 @@ export class RoomScene {
       attach(grip, bodyMat);
     });
 
-    // cruceta (lado -Z) y botones LED (lado +Z), elevados sobre la tapa del cuerpo
     attach(
       this.box(
         name + 'DpadH',
@@ -3125,7 +3140,6 @@ export class RoomScene {
       btn.position = new Vector3(-0.008 * s, 0.04 * s, z * s);
       attach(btn, led);
     });
-    // botón central tipo "start"
     attach(
       this.box(
         name + 'Center',
@@ -3884,7 +3898,7 @@ export class RoomScene {
 
     if (target?.kind === 'hotspot') {
       if (this.hoveredDisc !== null) {
-        this.clearDiscHighlight();
+        this.clearHotspotHighlight();
         this.hoveredDisc = null;
       }
       if (this.hoveredPad !== null) {
@@ -3894,7 +3908,7 @@ export class RoomScene {
       if (target.id !== this.hoveredId) {
         this.clearHotspotHighlight();
         this.hoveredId = target.id;
-        this.applyHotspotHighlight(target.id);
+        this.applyHighlight();
       }
       this.callbacks.onHover?.({ id: target.id, x, y });
       return;
@@ -3910,9 +3924,9 @@ export class RoomScene {
         this.hoveredPad = null;
       }
       if (target.index !== this.hoveredDisc) {
-        this.clearDiscHighlight();
+        this.clearHotspotHighlight();
         this.hoveredDisc = target.index;
-        this.applyDiscHighlight(target.index);
+        this.applyHighlight();
       }
       this.callbacks.onHover?.({
         id: 'disc',
@@ -3929,13 +3943,13 @@ export class RoomScene {
         this.hoveredId = null;
       }
       if (this.hoveredDisc !== null) {
-        this.clearDiscHighlight();
+        this.clearHotspotHighlight();
         this.hoveredDisc = null;
       }
       if (target.pad !== this.hoveredPad) {
         this.clearPadHighlight();
         this.hoveredPad = target.pad;
-        this.applyPadHighlight(target.pad);
+        this.applyHighlight();
       }
       this.callbacks.onHover?.({
         id: 'pad',
@@ -4046,26 +4060,11 @@ export class RoomScene {
     return id !== 'door';
   }
 
-  private applyHotspotHighlight(id: HotspotId): void {
-    void id;
-    this.canvas.style.cursor = 'pointer';
-  }
-
-  private applyDiscHighlight(index: number): void {
-    void index;
-    this.canvas.style.cursor = 'pointer';
-  }
-
-  private applyPadHighlight(pad: PadLink): void {
-    void pad;
+  private applyHighlight(): void {
     this.canvas.style.cursor = 'pointer';
   }
 
   private clearHotspotHighlight(): void {
-    this.canvas.style.cursor = '';
-  }
-
-  private clearDiscHighlight(): void {
     this.canvas.style.cursor = '';
   }
 
@@ -4076,7 +4075,6 @@ export class RoomScene {
 
   private clearHighlights(): void {
     this.clearHotspotHighlight();
-    this.clearDiscHighlight();
     this.clearPadHighlight();
     this.hoveredId = null;
     this.hoveredDisc = null;

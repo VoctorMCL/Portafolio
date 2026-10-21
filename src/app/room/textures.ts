@@ -163,43 +163,6 @@ export function posterCanvas(lines: string[], bg: string, fg: string): HTMLCanva
   return canvas;
 }
 
-export function faceCanvas(bg = '#ffd23f', fg = '#101014', size = 256): HTMLCanvasElement {
-  const { canvas, ctx } = surface(size, size);
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, size, size);
-
-  const glow = ctx.createRadialGradient(
-    size * 0.42,
-    size * 0.36,
-    size * 0.06,
-    size * 0.5,
-    size * 0.5,
-    size * 0.62,
-  );
-  glow.addColorStop(0, 'rgba(255, 255, 255, 0.35)');
-  glow.addColorStop(1, 'rgba(255, 255, 255, 0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, size, size);
-
-  ctx.fillStyle = fg;
-  const drawEye = (cx: number, cy: number, r: number) => {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fill();
-  };
-  drawEye(size * 0.34, size * 0.4, size * 0.062);
-  drawEye(size * 0.66, size * 0.4, size * 0.062);
-
-  ctx.strokeStyle = fg;
-  ctx.lineWidth = size * 0.05;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.arc(size * 0.5, size * 0.52, size * 0.21, Math.PI * 0.16, Math.PI * 0.84);
-  ctx.stroke();
-
-  return canvas;
-}
-
 export function globeCanvas(): HTMLCanvasElement {
   const W = 512;
   const H = 256;
