@@ -82,7 +82,8 @@ export interface HoverInfo {
 type PickTarget =
   | { kind: 'hotspot'; id: HotspotId }
   | { kind: 'disc'; index: number }
-  | { kind: 'link'; pad: PadLink };
+  | { kind: 'link'; pad: PadLink }
+  | { kind: 'monitor'; view: ViewId };
 
 export interface RoomSceneCallbacks {
   onHover?: (info: HoverInfo | null) => void;
@@ -92,6 +93,7 @@ export interface RoomSceneCallbacks {
   onConsole?: (open: boolean) => void;
   onConsoleOutput?: () => void;
   onMedia?: (open: boolean) => void;
+  onView?: (view: ViewId) => void;
 }
 
 interface Pose {
@@ -2248,7 +2250,10 @@ export class RoomScene {
       new Vector3(0.68, 1.42, -3.37),
       termScreenMat,
     );
-    monitorScreenL.metadata = { hotspotId: 'terminal' as HotspotId };
+    monitorScreenL.metadata = {
+      hotspotId: 'terminal' as HotspotId,
+      monitorView: 'monitor1' as ViewId,
+    };
     const monitorBodyR = this.box(
       'monitorR',
       { w: 1.1, h: 0.95, d: 0.06 },
@@ -2261,6 +2266,10 @@ export class RoomScene {
       new Vector3(-0.68, 1.42, -3.37),
       outScreenMat,
     );
+    monitorScreenR.metadata = {
+      hotspotId: 'terminal' as HotspotId,
+      monitorView: 'monitor2' as ViewId,
+    };
 
     const kb = this.slab(
       'keyboard',
@@ -2605,7 +2614,7 @@ export class RoomScene {
       m.metadata = { hotspotId: 'desk' as HotspotId };
     });
     this.interiorPickable.set('desk', deskHotspot);
-    this.interiorPickable.get('desk')!.push(monitorScreenL);
+    this.interiorPickable.get('desk')!.push(monitorScreenL, monitorScreenR);
   }
 
   private buildShelf(): void {
@@ -3887,6 +3896,14 @@ export class RoomScene {
       this.openPadLink(target.pad);
       return;
     }
+    if (target.kind === 'monitor') {
+      if (this.phase === 'intro' || this.phase === 'entering') {
+        return;
+      }
+      this.callbacks.onView?.(target.view);
+      this.openConsole(target.view === 'monitor1' ? MONITOR_TERM_POSE : MONITOR_OUT_POSE);
+      return;
+    }
     if (target.kind === 'disc') {
       this.insertDisc(target.index);
       return;
@@ -4009,6 +4026,7 @@ export class RoomScene {
         hotspotId?: HotspotId;
         discIndex?: number;
         padLink?: PadLink;
+        monitorView?: ViewId;
       } | null;
       if (!meta) {
         return false;
@@ -4031,12 +4049,16 @@ export class RoomScene {
       hotspotId?: HotspotId;
       discIndex?: number;
       padLink?: PadLink;
+      monitorView?: ViewId;
     } | null;
     if (meta && typeof meta.discIndex === 'number') {
       return { kind: 'disc', index: meta.discIndex };
     }
     if (meta?.padLink) {
       return { kind: 'link', pad: meta.padLink };
+    }
+    if (meta?.monitorView && (this.coarsePointer || this.narrow)) {
+      return { kind: 'monitor', view: meta.monitorView };
     }
     if (meta?.hotspotId) {
       return { kind: 'hotspot', id: meta.hotspotId };

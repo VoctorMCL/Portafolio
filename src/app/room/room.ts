@@ -135,6 +135,7 @@ export class Room implements OnDestroy {
             onConsole: (open) => this.onConsoleChange(open),
             onConsoleOutput: () => this.syncConsoleOutput(),
             onMedia: (open) => this.onMediaChange(open),
+            onView: (view) => this.syncView(view),
           };
           const canvas = this.canvasRef().nativeElement;
           let scene: RoomScene;
@@ -220,10 +221,15 @@ export class Room implements OnDestroy {
   }
 
   protected stepView(delta: number): void {
-    const count = ROOM_VIEWS.length;
-    const next = (this.viewIndex() + delta + count) % count;
-    this.viewIndex.set(next);
-    this.scene?.setView(ROOM_VIEWS[next]);
+    // en móvil la vista "PC" se omite: los monitores abren Pantalla 1 y 2
+    const views = this.compactNav() ? ROOM_VIEWS.filter((v) => v !== 'desk') : ROOM_VIEWS;
+    const count = views.length;
+    const current = views.indexOf(ROOM_VIEWS[this.viewIndex()]);
+    const step = current < 0 ? 0 : current;
+    const next = (step + delta + count) % count;
+    const view = views[next];
+    this.viewIndex.set(ROOM_VIEWS.indexOf(view));
+    this.scene?.setView(view);
   }
 
   protected closeDisc(): void {
@@ -269,6 +275,10 @@ export class Room implements OnDestroy {
     if (open) {
       this.viewIndex.set(ROOM_VIEWS.indexOf('tv'));
     }
+  }
+
+  private syncView(view: ViewId): void {
+    this.viewIndex.set(Math.max(0, ROOM_VIEWS.indexOf(view)));
   }
 
   private onConsoleChange(open: boolean): void {
