@@ -95,6 +95,7 @@ export interface RoomSceneCallbacks {
   onConsoleOutput?: () => void;
   onMedia?: (open: boolean) => void;
   onView?: (view: ViewId) => void;
+  onRequestKeyboard?: () => void;
 }
 
 interface Pose {
@@ -679,6 +680,13 @@ export class RoomScene {
       // no se aplica: hace falta ver las dos pantallas del escritorio a la vez.
       this.camera.fov *= 0.78;
       this.viewScale = 1;
+    } else if (
+      this.coarsePointer &&
+      this.consoleOpen &&
+      (this.goal === MONITOR_TERM_POSE || this.goal === MONITOR_OUT_POSE)
+    ) {
+      // móvil, vista de un monitor suelto: acerca un poco para leer el texto
+      this.viewScale = 0.82;
     }
   }
 
@@ -3797,6 +3805,9 @@ export class RoomScene {
     if (this.consoleOpen) {
       if (pose) {
         this.goal = pose;
+        this.updateViewport();
+        // toque en un monitor con la consola ya abierta: reabre el teclado
+        this.callbacks.onRequestKeyboard?.();
       }
       return;
     }

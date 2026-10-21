@@ -136,6 +136,7 @@ export class Room implements OnDestroy {
             onConsoleOutput: () => this.syncConsoleOutput(),
             onMedia: (open) => this.onMediaChange(open),
             onView: (view) => this.syncView(view),
+            onRequestKeyboard: () => this.focusConsoleInput(),
           };
           const canvas = this.canvasRef().nativeElement;
           let scene: RoomScene;
