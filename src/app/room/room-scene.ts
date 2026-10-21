@@ -67,7 +67,7 @@ export type HotspotId = 'door' | 'shelf' | 'tv' | 'desk' | 'terminal';
 export type InteriorId = Exclude<HotspotId, 'door' | 'terminal'>;
 export type PanelId = Exclude<InteriorId, 'tv'>;
 export type ScenePhase = 'intro' | 'entering' | 'idle' | 'focus';
-export type ViewId = 'general' | 'tv' | 'desk' | 'shelf';
+export type ViewId = 'general' | 'tv' | 'desk' | 'shelf' | 'monitor1' | 'monitor2';
 export type HoverTargetId = HotspotId | 'disc' | 'pad';
 type PadLink = 'demo' | 'repo';
 
@@ -124,9 +124,27 @@ const FOCUS: Record<InteriorId, Pose> = {
   },
 };
 
+// en pantallas estrechas (portrait/coarse) la consola retrocede para que quepan
+// las dos pantallas del escritorio: la terminal (izquierda) y la salida (derecha)
+const CONSOLE_POSE_COARSE: Pose = {
+  position: new Vector3(0, 1.52, 0.35),
+  target: new Vector3(0, 1.42, -3.42),
+};
+
 const SCREEN_POSE: Pose = {
   position: new Vector3(2.05, 1.3, -1.28),
   target: new Vector3(3.5, 0.98, -1.5),
+};
+
+// paradas de vista para móvil: cada monitor del escritorio por separado
+// (+X es el lado izquierdo en pantalla)
+const MONITOR_TERM_POSE: Pose = {
+  position: new Vector3(0.68, 1.46, -2.15),
+  target: new Vector3(0.68, 1.42, -3.37),
+};
+const MONITOR_OUT_POSE: Pose = {
+  position: new Vector3(-0.68, 1.46, -2.15),
+  target: new Vector3(-0.68, 1.42, -3.37),
 };
 
 const MEDIA_WALL_X = 3.9;
@@ -385,6 +403,7 @@ export class RoomScene {
   private pickScheduled = false;
   private tapStart: { x: number; y: number } | null = null;
   private viewScale = 1;
+  private narrow = false;
   private readonly viewOffset = new Vector3();
   private readonly coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
   private readonly tier: TierInfo = detectDeviceTier(this.coarsePointer);
@@ -645,13 +664,15 @@ export class RoomScene {
     const width = window.innerWidth || this.engine.getRenderWidth();
     const height = Math.max(1, window.innerHeight || this.engine.getRenderHeight());
     const cssAspect = width / height;
+    this.narrow = cssAspect < 0.75 || this.coarsePointer;
     this.viewScale =
       cssAspect >= 1.1
         ? 1
         : Math.min(1.34, 1 + (1.1 - cssAspect) * (cssAspect < 0.75 ? 0.62 : 0.4));
-    if (this.coarsePointer) {
+    if (this.coarsePointer && !this.consoleOpen) {
       // móvil: mucho zoom — el encuadre se centra en las pantallas del TV
-      // y de la PC, sin retroceso de cámara en portrait
+      // y de la PC, sin retroceso de cámara en portrait. Con la consola abierta
+      // no se aplica: hace falta ver las dos pantallas del escritorio a la vez.
       this.camera.fov *= 0.78;
       this.viewScale = 1;
     }
@@ -739,6 +760,10 @@ export class RoomScene {
     }
     if (view === 'tv') {
       this.openDiscRack();
+      return;
+    }
+    if (view === 'monitor1' || view === 'monitor2') {
+      this.openConsole(view === 'monitor1' ? MONITOR_TERM_POSE : MONITOR_OUT_POSE);
       return;
     }
     this.focus(view);
@@ -1377,7 +1402,13 @@ export class RoomScene {
     if (!this.chairRoot) {
       return;
     }
-    const target = this.goal === FOCUS.desk ? 1 : 0;
+    const target =
+      this.goal === FOCUS.desk ||
+      this.goal === CONSOLE_POSE_COARSE ||
+      this.goal === MONITOR_TERM_POSE ||
+      this.goal === MONITOR_OUT_POSE
+        ? 1
+        : 0;
     const step = dt / 0.9;
     this.chairT = target === 1 ? Math.min(1, this.chairT + step) : Math.max(0, this.chairT - step);
     const e = easeInOutCubic(this.chairT);
@@ -3751,14 +3782,17 @@ export class RoomScene {
     return [...this.consoleHistory];
   }
 
-  openConsole(): void {
+  openConsole(pose?: Pose): void {
     if (this.consoleOpen) {
+      if (pose) {
+        this.goal = pose;
+      }
       return;
     }
     this.consoleOpen = true;
     this.resetMedia();
     this.phase = 'focus';
-    this.goal = FOCUS.desk;
+    this.goal = pose ?? (this.coarsePointer || this.narrow ? CONSOLE_POSE_COARSE : FOCUS.desk);
     this.callbacks.onPhase?.('focus');
     this.callbacks.onConsole?.(true);
     this.consoleInput = '';
@@ -3767,6 +3801,7 @@ export class RoomScene {
     this.lastCursor = this.elapsed;
     this.consoleEcho = this.consoleEcho.slice(-8);
     this.attachConsoleKeys();
+    this.updateViewport();
     this.updateTermScreen();
     this.notifyConsole();
   }
@@ -3785,6 +3820,7 @@ export class RoomScene {
     this.consoleOpen = false;
     this.detachConsoleKeys();
     this.callbacks.onConsole?.(false);
+    this.updateViewport();
     this.updateTermScreen();
     this.notifyConsole();
     return true;

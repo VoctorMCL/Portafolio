@@ -27,19 +27,48 @@
     } @else if (mediaOpen()) {
       <p class="hint">{{ mediaHint() }}</p>
     } @else if (phase() === 'idle') {
-      <p class="hint">{{ compactNav() ? 'Toca un objeto o cambia de vista' : 'Haz clic en los objetos para explorar' }}</p>
+      <p class="hint">
+        {{
+          compactNav()
+            ? 'Toca un objeto o cambia de vista'
+            : 'Haz clic en los objetos para explorar'
+        }}
+      </p>
     } @else if (phase() === 'focus') {
       <p class="hint">{{ viewFocusHint() }}</p>
     }
   }
 
-  @if (compactNav() && !section() && !loading() && !disc() && !consoleActive() && phase() !== 'intro' && phase() !== 'entering') {
-    <div class="view-nav" role="group" aria-label="Cambiar de vista">
-      <button type="button" class="view-nav__btn" (click)="stepView(-1)" aria-label="Vista anterior">
+  @if (
+    compactNav() &&
+    !section() &&
+    !loading() &&
+    !disc() &&
+    (!consoleActive() || isMonitorView()) &&
+    phase() !== 'intro' &&
+    phase() !== 'entering'
+  ) {
+    <div
+      class="view-nav"
+      [class.view-nav--raised]="consoleActive()"
+      role="group"
+      aria-label="Cambiar de vista"
+    >
+      <button
+        type="button"
+        class="view-nav__btn"
+        (click)="stepView(-1)"
+        aria-label="Vista anterior"
+      >
         &#8249;
       </button>
       <span class="view-nav__label" aria-live="polite">{{ viewLabel() }}</span>
-      <button type="button" class="view-nav__btn" (click)="stepView(1)" aria-label="Vista siguiente">
+      <button
+        type="button"
+        class="view-nav__btn"
+        (click)="stepView(1)"
+        aria-label="Vista siguiente"
+      >
         &#8250;
       </button>
     </div>
@@ -63,7 +92,12 @@
       (keydown)="onConsoleKeydown($event)"
       aria-label="Escribe un comando en la consola"
     />
-    <button type="button" class="console-ghost__close" (click)="closeConsole()" aria-label="Cerrar consola">
+    <button
+      type="button"
+      class="console-ghost__close"
+      (click)="closeConsole()"
+      aria-label="Cerrar consola"
+    >
       &times;
     </button>
   }

@@ -110,6 +110,11 @@
   gap: 0.7rem;
 }
 
+/* con la consola abierta el nav se sube para no chocar con el botón de cerrar */
+.view-nav--raised {
+  bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+}
+
 .view-nav__btn,
 .disc-bar__btn {
   font: inherit;
@@ -268,12 +273,12 @@
 .console-ghost__close {
   position: absolute;
   z-index: 41;
-  right: 0.85rem;
+  right: max(0.85rem, env(safe-area-inset-right, 0px));
   bottom: calc(0.85rem + env(safe-area-inset-bottom, 0px));
-  width: 2.7rem;
-  height: 2.7rem;
+  width: 3rem;
+  height: 3rem;
   font: inherit;
-  font-size: 1.4rem;
+  font-size: 1.5rem;
   line-height: 1;
   color: #eaf5ff;
   background: rgba(20, 30, 50, 0.9);
@@ -281,6 +286,7 @@
   border-radius: 999px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
   cursor: pointer;
+  touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -288,3 +294,11 @@
   transform: scale(0.94);
 }
 
+@media (max-width: 480px) {
+  /* en pantallas pequeñas el hint de la consola se centra y deja libre
+     el botón de cerrar de la esquina inferior derecha */
+  .hint {
+    bottom: calc(5.6rem + env(safe-area-inset-bottom, 0px));
+    max-width: 72vw;
+  }
+}

@@ -15,7 +15,15 @@ import { LoadingService } from '../loading.service';
 import { InfoPanel, PanelSection } from '../ui/info-panel/info-panel';
 import { DiscProject, getProjects } from '../data/github';
 import { ROOM_CONTENT } from '../data/portfolio';
-import { HoverInfo, HotspotId, PanelId, RoomScene, RoomSceneCallbacks, ScenePhase, ViewId } from './room-scene';
+import {
+  HoverInfo,
+  HotspotId,
+  PanelId,
+  RoomScene,
+  RoomSceneCallbacks,
+  ScenePhase,
+  ViewId,
+} from './room-scene';
 import type { ConsoleLine } from './console-engine';
 import { loadSkillLogos } from './textures';
 import { VhsHud } from '../ui/vhs-hud/vhs-hud';
@@ -33,13 +41,15 @@ const LABEL_BY_HOTSPOT: Record<HotspotId, string> = {
   terminal: 'Consola',
 };
 
-const ROOM_VIEWS: ViewId[] = ['general', 'tv', 'desk', 'shelf'];
+const ROOM_VIEWS: ViewId[] = ['general', 'tv', 'shelf', 'desk', 'monitor1', 'monitor2'];
 
 const VIEW_LABEL: Record<ViewId, string> = {
   general: 'Vista general',
   tv: 'Proyectos',
-  desk: 'PC',
   shelf: 'Estantería',
+  desk: 'PC',
+  monitor1: 'Pantalla 1',
+  monitor2: 'Pantalla 2',
 };
 
 const COMPACT_NAV_QUERY = '(pointer: coarse), (any-hover: none), (max-width: 900px)';
@@ -67,19 +77,31 @@ export class Room implements OnDestroy {
   protected readonly consoleActive = signal(false);
   protected readonly compactNav = signal(true);
   protected readonly viewIndex = signal(0);
+  protected readonly isMonitorView = computed(() => {
+    const view = ROOM_VIEWS[this.viewIndex()];
+    return view === 'monitor1' || view === 'monitor2';
+  });
   protected readonly viewLabel = computed(() => VIEW_LABEL[ROOM_VIEWS[this.viewIndex()]]);
   protected readonly viewFocusHint = computed(() => {
     const view = ROOM_VIEWS[this.viewIndex()];
-    if (view === 'desk') {
-      return this.compactNav() ? 'Toca el monitor para abrir la consola' : 'Haz clic en el monitor para la consola';
+    if (view === 'desk' || view === 'monitor1' || view === 'monitor2') {
+      return this.compactNav()
+        ? 'Toca el monitor para abrir la consola'
+        : 'Haz clic en el monitor para la consola';
     }
     if (view === 'shelf') {
-      return this.compactNav() ? 'Toca los libros para saber de mí' : 'Haz clic en los libros para saber de mí';
+      return this.compactNav()
+        ? 'Toca los libros para saber de mí'
+        : 'Haz clic en los libros para saber de mí';
     }
-    return this.compactNav() ? 'Toca un objeto o cambia de vista' : 'Haz clic en los objetos para explorar';
+    return this.compactNav()
+      ? 'Toca un objeto o cambia de vista'
+      : 'Haz clic en los objetos para explorar';
   });
   protected readonly mediaOpen = signal(false);
-  protected readonly mediaHint = computed(() => (this.compactNav() ? 'Toca un disco' : 'Elige un disco · pulsa Esc para salir'));
+  protected readonly mediaHint = computed(() =>
+    this.compactNav() ? 'Toca un disco' : 'Elige un disco · pulsa Esc para salir',
+  );
   protected readonly consoleLines = signal<ConsoleLine[]>([]);
   protected readonly consoleDraft = signal('');
 
@@ -150,7 +172,9 @@ export class Room implements OnDestroy {
 
     if (typeof window !== 'undefined') {
       this.mediaQuery = window.matchMedia(COMPACT_NAV_QUERY);
-      this.compactNav.set(this.mediaQuery.matches || window.innerWidth <= 900 || 'ontouchstart' in window);
+      this.compactNav.set(
+        this.mediaQuery.matches || window.innerWidth <= 900 || 'ontouchstart' in window,
+      );
       this.mediaQuery.addEventListener('change', this.onCompactChange);
     }
 
@@ -300,7 +324,9 @@ export class Room implements OnDestroy {
     const cmd = raw.trim();
     this.consoleDraft.set('');
     if (cmd) {
-      this.consoleHistory = [...this.consoleHistory.filter((entry) => entry !== cmd), cmd].slice(-40);
+      this.consoleHistory = [...this.consoleHistory.filter((entry) => entry !== cmd), cmd].slice(
+        -40,
+      );
     }
     this.consoleHistoryIndex = -1;
     this.scene?.submitConsole(cmd);
